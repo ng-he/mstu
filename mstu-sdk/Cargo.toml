@@ -1,0 +1,11 @@
+[package]
+name = "mstu-sdk"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[lib]
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[build-dependencies]
+cbindgen = "0.29.4"

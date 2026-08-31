@@ -2,6 +2,8 @@
 resolver = "2"
 
 members = [
-    "crates/*",
-    "plugins-src/*",
+    "mstu-engine",
+    "mstu-media",
+    "mstu-sdk",
+    "mstu-plugins-src/*",
 ]

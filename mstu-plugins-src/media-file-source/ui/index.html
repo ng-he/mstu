@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Media file source</title>
+    <style>
+      :root {
+        --bg: #262626;
+        --bg-input: #1a1a1a;
+        --border: #3d3d3d;
+        --text: #e6e6e6;
+        --text-dim: #969696;
+        --text-faint: #6b6b6b;
+        --accent: #ff6c37;
+        --green: #3ba55d;
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 10px;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        font-size: 12px;
+      }
+
+      .label {
+        margin-bottom: 5px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--text-faint);
+      }
+
+      .field {
+        display: flex;
+        gap: 5px;
+      }
+
+      .field input {
+        flex: 1;
+        min-width: 0;
+        padding: 5px 7px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg-input);
+        color: var(--text);
+        font: inherit;
+        font-size: 11px;
+        text-overflow: ellipsis;
+      }
+
+      .field input:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+
+      .field button {
+        padding: 0 9px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: none;
+        color: var(--text-dim);
+        font: inherit;
+        cursor: pointer;
+      }
+
+      .field button:hover {
+        color: var(--text);
+        border-color: var(--text-faint);
+      }
+
+      .meta {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 9px;
+      }
+
+      .chip {
+        padding: 2px 6px;
+        border-radius: 3px;
+        background: rgba(255, 108, 55, 0.14);
+        color: var(--accent);
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+
+      .dim {
+        color: var(--text-dim);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 9px;
+        padding-top: 9px;
+        border-top: 1px solid #303030;
+        color: var(--text-dim);
+      }
+
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--text-faint);
+      }
+
+      .dot.on {
+        background: var(--green);
+        box-shadow: 0 0 0 3px rgba(59, 165, 93, 0.16);
+      }
+
+      .count {
+        margin-left: auto;
+        font-family: 'IBM Plex Mono', ui-monospace, monospace;
+        font-size: 11px;
+        color: var(--text);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="label">Source file</div>
+
+    <div class="field">
+      <input id="path" placeholder="No file selected" />
+      <button id="browse" title="Choose a file">…</button>
+    </div>
+
+    <div class="meta">
+      <span class="chip" id="codec">—</span>
+      <span class="dim" id="file">no file open</span>
+    </div>
+
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="state">idle</span>
+      <span class="count" id="samples">0</span>
+    </div>
+
+    <script type="module">
+      const el = (id) => document.getElementById(id)
+
+      /// Settings field 0 is `path`, per the plugin settings schema.
+      const PATH_FIELD = 0
+
+      const host = {
+        send: (message) => parent.postMessage(message, '*'),
+        setParameter: (field, value) => host.send({ type: 'set_parameter', field, value })
+      }
+
+      let samples = 0
+
+      el('path').addEventListener('change', (event) =>
+        host.setParameter(PATH_FIELD, event.target.value)
+      )
+
+      el('browse').addEventListener('click', () =>
+        host.send({ type: 'pick', kind: 'file', field: PATH_FIELD, accept: ['mp4'] })
+      )
+
+      window.addEventListener('message', ({ data }) => {
+        if (data.type === 'init') {
+          el('path').value = data.settings?.[PATH_FIELD] ?? ''
+          return
+        }
+
+        if (data.type === 'event' && data.event === 0) {
+          // file.changed [file_name, codec, extras]
+          const [name, codec] = data.payload
+          el('file').textContent = name.split('/').pop()
+          el('codec').textContent = codec
+          return
+        }
+
+        if (data.type === 'event' && data.event === 1) {
+          el('state').textContent = 'end of file'
+          el('dot').classList.remove('on')
+          return
+        }
+
+        if (data.type === 'state') {
+          samples = data.samples ?? samples
+          el('samples').textContent = samples.toLocaleString()
+          el('state').textContent = data.running ? 'reading' : 'idle'
+          el('dot').classList.toggle('on', Boolean(data.running))
+        }
+      })
+
+      host.send({ type: 'ready' })
+    </script>
+  </body>
+</html>
