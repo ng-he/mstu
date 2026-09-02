@@ -1,6 +1,28 @@
 use mstu_sdk::{
     CommandDescriptor, Data, EnumSchema, EnumVariant, Field, Schema, Slice, Str, TYPE_BYTES,
-    TYPE_STRING, Type, TypeKind::TypeEnum, TypeSchema, Value, ValueKind, slice,
+    TYPE_STRING, TYPE_U64, Type, TypeKind::TypeEnum, TypeSchema, Value, ValueKind, slice,
+};
+
+pub static LIVE_SCHEMA_FIELDS: [Field; 3] = [
+    Field {
+        name: Str::from_static("file"),
+        ty: &TYPE_STRING,
+        description: Str::from_static("Name of the file being written, empty when none is open."),
+    },
+    Field {
+        name: Str::from_static("chunks"),
+        ty: &TYPE_U64,
+        description: Str::from_static("Chunks written to the current file."),
+    },
+    Field {
+        name: Str::from_static("bytes"),
+        ty: &TYPE_U64,
+        description: Str::from_static("Bytes written to the current file."),
+    },
+];
+
+pub static LIVE_SCHEMA: Schema = Schema {
+    fields: slice!(LIVE_SCHEMA_FIELDS),
 };
 
 pub static SETTINGS_SCHEMA_FIELDS: [Field; 1] = [Field {

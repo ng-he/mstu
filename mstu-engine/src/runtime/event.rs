@@ -193,6 +193,51 @@ impl Manager {
         }
     }
 
+    /// Drops the subscription of `command` on `plugin`, returns whether one
+    /// was there.
+    pub fn unsubscribe(
+        &mut self,
+        plugin_id: &str,
+        event: usize,
+        plugin: PluginHandle,
+        command: usize,
+    ) -> bool {
+        let Some(channel) = self.channels.get_mut(plugin_id) else {
+            return false;
+        };
+
+        let Some(subscriptions) = channel.subscriptions.get_mut(event) else {
+            return false;
+        };
+
+        let before = subscriptions.len();
+
+        subscriptions
+            .retain(|existing| !(existing.plugin == plugin && existing.command == command));
+
+        let removed = subscriptions.len() < before;
+
+        if removed {
+            log_debug!("'{plugin_id}' event {event}: command {command} unsubscribed");
+        }
+
+        removed
+    }
+
+    /// Closes a plugin's channel and drops every subscription pointing at it.
+    ///
+    /// A released plugin must not be reachable through an event it never saw
+    /// unsubscribed.
+    pub fn forget(&mut self, plugin_id: &str, plugin: PluginHandle) {
+        self.channels.remove(plugin_id);
+
+        for channel in self.channels.values_mut() {
+            for subscriptions in channel.subscriptions.iter_mut() {
+                subscriptions.retain(|existing| existing.plugin != plugin);
+            }
+        }
+    }
+
     /// Queues an event and returns the writer that fills its payload.
     pub fn new_event(&mut self, plugin_id: &str, event: usize) -> *const message::Writer {
         let Some(channel) = self.channels.get_mut(plugin_id) else {

@@ -417,6 +417,58 @@ input:focus {
   white-space: nowrap;
 }
 
+.node-head .power {
+  flex: none;
+  margin-left: auto;
+  align-self: center;
+  width: 28px;
+  height: 15px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.node-head .power .knob {
+  display: block;
+  width: 9px;
+  height: 9px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
+}
+
+.node-head .power.on {
+  background: rgba(59, 165, 93, 0.22);
+  border-color: var(--green);
+}
+
+.node-head .power.on .knob {
+  background: var(--green);
+  transform: translateX(13px);
+}
+
+.node-head .power:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* A node switched off mid-run: still there, plainly not working. */
+.node.off .node-body {
+  opacity: 0.45;
+}
+
+.node.off .node-head .name {
+  color: var(--text-dim);
+}
+
 .node-body {
   min-height: 92px;
   padding: 10px 12px 12px 14px;

@@ -76,6 +76,12 @@ pub struct PluginDescriptor {
 
     /// Invokes a command.
     pub invoke: extern "C" fn(handle: PluginHandle, command: usize, input: *const Message) -> bool,
+
+    /// Returns the schema of the live snapshot the UI shows, null when there is none.
+    pub live_schema: extern "C" fn() -> *const Schema,
+
+    /// Fills the current live values, polled by the host while `process` may be running.
+    pub live: extern "C" fn(handle: PluginHandle, output: *mut message::Writer) -> bool,
 }
 
 unsafe extern "C" {

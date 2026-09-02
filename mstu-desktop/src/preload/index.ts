@@ -7,6 +7,13 @@ export type EngineEvent = {
   values: unknown[]
 }
 
+/// A plugin's live snapshot, pushed on the engine's timer.
+export type EngineLive = {
+  type: 'live'
+  plugin: string
+  values: unknown[]
+}
+
 /// Everything the renderer may call. Nothing else crosses the bridge.
 const api = {
   call: <T = unknown,>(method: string, params: unknown = {}): Promise<T> =>
@@ -24,6 +31,13 @@ const api = {
     ipcRenderer.on('mstu:event', handler)
 
     return () => ipcRenderer.removeListener('mstu:event', handler)
+  },
+
+  onLive: (listener: (live: EngineLive) => void): (() => void) => {
+    const handler = (_: unknown, payload: EngineLive): void => listener(payload)
+    ipcRenderer.on('mstu:live', handler)
+
+    return () => ipcRenderer.removeListener('mstu:live', handler)
   },
 
   onStatus: (listener: (connected: boolean) => void): (() => void) => {

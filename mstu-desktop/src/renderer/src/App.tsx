@@ -26,6 +26,34 @@ function defaultMapping(source: Field[], target: Field[], taken: Set<number>): M
   return { id: newId('m'), from, to }
 }
 
+/// The engine keys a subscription by event and command, so two rows sharing a
+/// pair would be a single registration that either row could delete.
+function pairTaken(
+  subscriptions: Subscription[],
+  event: number,
+  command: number,
+  except?: string
+): boolean {
+  return subscriptions.some(
+    (item) => item.id !== except && item.event === event && item.command === command
+  )
+}
+
+/// First event and command pair no other subscription has claimed.
+function freePair(
+  subscriptions: Subscription[],
+  events: number,
+  commands: number
+): { event: number; command: number } | null {
+  for (let event = 0; event < events; event++) {
+    for (let command = 0; command < commands; command++) {
+      if (!pairTaken(subscriptions, event, command)) return { event, command }
+    }
+  }
+
+  return null
+}
+
 /// Fills a whole payload at once: every target field takes the source field
 /// of the same name, or failing that the first one of the same type.
 ///
@@ -74,9 +102,15 @@ function App(): JSX.Element {
       post(notice.plugin, { type: 'event', event: notice.event, payload: notice.values })
     })
 
+    /// Each plugin's own live values, straight through to its UI.
+    const offLive = window.mstu.onLive((live) => {
+      post(live.plugin, { type: 'live', payload: live.values })
+    })
+
     return () => {
       offStatus()
       offEvent()
+      offLive()
     }
   }, [post])
 
@@ -184,6 +218,7 @@ function App(): JSX.Element {
           library: library.key,
           name: library.name,
           ui: Boolean(created.ui),
+          running: false,
           x: 60 + current.length * 80,
           y: 80 + current.length * 60
         }
@@ -244,6 +279,16 @@ function App(): JSX.Element {
       .catch(report)
   }
 
+  /// The engine keys a subscription by event and command, so one that moves
+  /// to another pair has to be dropped from the old one by hand.
+  function dropSubscription(previous: Subscription): void {
+    if (!source || !target) return
+
+    engine
+      .unsubscribe(source.plugin, previous.event, target.plugin, previous.command)
+      .catch(report)
+  }
+
   const editMappings = (change: (current: Connector) => Connector): void => {
     const next = updateConnector(change)
     if (next) commitMappings(next)
@@ -253,6 +298,8 @@ function App(): JSX.Element {
     subscriptionId: string,
     change: (current: Subscription) => Subscription
   ): void => {
+    const previous = connector?.subscriptions.find((item) => item.id === subscriptionId)
+
     const next = updateConnector((current) => ({
       ...current,
       subscriptions: current.subscriptions.map((item) =>
@@ -261,7 +308,15 @@ function App(): JSX.Element {
     }))
 
     const subscription = next?.subscriptions.find((item) => item.id === subscriptionId)
-    if (subscription) commitSubscription(subscription)
+    if (!subscription) return
+
+    const moved =
+      previous &&
+      (previous.event !== subscription.event || previous.command !== subscription.command)
+
+    if (moved) dropSubscription(previous)
+
+    commitSubscription(subscription)
   }
 
   async function toggleRun(): Promise<void> {
@@ -276,11 +331,41 @@ function App(): JSX.Element {
 
       setRunning(!running)
 
+      // Starting switches every node on. Stopping only switches the sources
+      // off, so whatever is still in flight drains, which is what the engine
+      // does too.
+      setNodes((current) =>
+        current.map((node) => ({
+          ...node,
+          running: running ? node.running && !libraryOf(node)?.source : true
+        }))
+      )
+
       for (const node of nodes) {
         post(node.plugin, { type: 'state', running: !running })
       }
     } catch (problem) {
       report(problem)
+    }
+  }
+
+  /// A node only has a worker to switch once the pipeline has started.
+  async function toggleNode(id: number, next: boolean): Promise<void> {
+    if (pipeline === null) return
+
+    setNodes((current) =>
+      current.map((node) => (node.id === id ? { ...node, running: next } : node))
+    )
+
+    try {
+      await engine.setNodeRunning(pipeline, id, next)
+    } catch (problem) {
+      report(problem)
+
+      // The engine kept its old state, so the switch has to go back.
+      setNodes((current) =>
+        current.map((node) => (node.id === id ? { ...node, running: !next } : node))
+      )
     }
   }
 
@@ -311,7 +396,9 @@ function App(): JSX.Element {
             connectors={connectors}
             libraries={libraries}
             selectedConnector={connectorId}
+            started={running}
             onSelectConnector={setConnectorId}
+            onToggleNode={toggleNode}
             onLink={createLink}
             onMoveNode={(id, x, y) =>
               setNodes((current) =>
@@ -359,13 +446,23 @@ function App(): JSX.Element {
               }))
             }
             onAddSubscription={() => {
+              const events = libraryOf(source)?.events ?? []
+              const commands = libraryOf(target)?.commands ?? []
+
+              const pair = freePair(connector?.subscriptions ?? [], events.length, commands.length)
+
+              if (!pair) {
+                report(new Error('Every event and command pair is already subscribed'))
+                return
+              }
+
               const subscription: Subscription = {
                 id: newId('s'),
-                event: 0,
-                command: 0,
+                event: pair.event,
+                command: pair.command,
                 mappings: autoMappings(
-                  libraryOf(source)?.events[0]?.schema?.fields ?? [],
-                  libraryOf(target)?.commands[0]?.schema?.fields ?? []
+                  events[pair.event]?.schema?.fields ?? [],
+                  commands[pair.command]?.schema?.fields ?? []
                 )
               }
 
@@ -376,27 +473,48 @@ function App(): JSX.Element {
 
               commitSubscription(subscription)
             }}
-            onRemoveSubscription={(subscriptionId) =>
+            onRemoveSubscription={(subscriptionId) => {
+              const previous = connector?.subscriptions.find((item) => item.id === subscriptionId)
+
+              if (previous) dropSubscription(previous)
+
               updateConnector((current) => ({
                 ...current,
                 subscriptions: current.subscriptions.filter((item) => item.id !== subscriptionId)
               }))
-            }
-            onChangeSubscription={(subscriptionId, patch) =>
-              editSubscription(subscriptionId, (current) => {
-                const next = { ...current, ...patch }
+            }}
+            onChangeSubscription={(subscriptionId, patch) => {
+              const events = libraryOf(source)?.events ?? []
+              const commands = libraryOf(target)?.commands ?? []
+
+              const current = connector?.subscriptions.find((item) => item.id === subscriptionId)
+              if (!current) return
+
+              const next = { ...current, ...patch }
+
+              // Moving onto a pair another row holds would collapse the two
+              // into one registration, and removing either would kill both.
+              if (pairTaken(connector?.subscriptions ?? [], next.event, next.command, next.id)) {
+                report(
+                  new Error(
+                    `${events[next.event]?.name} → ${commands[next.command]?.name} is already subscribed`
+                  )
+                )
+
+                return
+              }
+
+              editSubscription(subscriptionId, () => ({
+                ...next,
 
                 // The old rows index into the schema that just changed, so
                 // they would now point at the wrong fields.
-                return {
-                  ...next,
-                  mappings: autoMappings(
-                    libraryOf(source)?.events[next.event]?.schema?.fields ?? [],
-                    libraryOf(target)?.commands[next.command]?.schema?.fields ?? []
-                  )
-                }
-              })
-            }
+                mappings: autoMappings(
+                  events[next.event]?.schema?.fields ?? [],
+                  commands[next.command]?.schema?.fields ?? []
+                )
+              }))
+            }}
             onAddSubscriptionMapping={(subscriptionId) =>
               editSubscription(subscriptionId, (current) => ({
                 ...current,

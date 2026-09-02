@@ -1,4 +1,8 @@
-use std::{env, path::PathBuf, time::Duration};
+use std::{
+    env,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use mstu_sdk::{
     CommandDescriptor, EventDescriptor, Message, PluginDescriptor, Schema, Slice, Str, Type,
@@ -24,6 +28,9 @@ use crate::{
 
 /// How often queued pipeline output is routed while the socket is quiet.
 const ROUTE_INTERVAL: Duration = Duration::from_millis(1);
+
+/// How often plugin live snapshots are pushed to the client.
+const LIVE_INTERVAL: Duration = Duration::from_millis(250);
 
 pub fn socket_path() -> PathBuf {
     let dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
@@ -124,6 +131,7 @@ fn library_json(key: &str, descriptor: &'static PluginDescriptor) -> Json {
         "input": schema_json((descriptor.process_input_schema)()),
         "output": schema_json((descriptor.process_output_schema)()),
         "settings": schema_json((descriptor.settings_schema)()),
+        "live": schema_json((descriptor.live_schema)()),
         "events": events_json((descriptor.events)()),
         "commands": commands_json((descriptor.commands)()),
     })
@@ -273,6 +281,17 @@ fn dispatch(app: &mut App, method: &str, params: &Json) -> Result<Json, String> 
             Ok(json!({}))
         }
 
+        "unsubscribe" => {
+            app.unsubscribe(
+                &as_str(params, "from")?,
+                as_usize(params, "event")?,
+                &as_str(params, "to")?,
+                as_usize(params, "command")?,
+            )?;
+
+            Ok(json!({}))
+        }
+
         "set_parameter" => {
             let mut storage = Storage::default();
             let value = storage.value(&field(params, "value")?)?;
@@ -393,11 +412,13 @@ async fn serve_client(app: &mut App, stream: UnixStream) {
     let (tap, mut notices) = unbounded_channel::<Notice>();
     event::set_tap(Some(tap));
 
+    let mut polled = Instant::now();
+
     loop {
-        let message = tokio::select! {
+        let messages = tokio::select! {
             line = lines.next_line() => match line {
                 Ok(Some(line)) => match respond(app, &line) {
-                    Some(response) => response,
+                    Some(response) => vec![response],
                     None => continue,
                 },
                 // Client went away, wait for the next one.
@@ -405,18 +426,32 @@ async fn serve_client(app: &mut App, stream: UnixStream) {
             },
 
             notice = notices.recv() => match notice {
-                Some(notice) => notice_json(&notice),
+                Some(notice) => vec![notice_json(&notice)],
                 None => continue,
             },
 
             _ = tokio::time::sleep(ROUTE_INTERVAL) => {
                 app.route_pending();
-                continue;
+
+                if polled.elapsed() < LIVE_INTERVAL {
+                    continue;
+                }
+
+                polled = Instant::now();
+                live_json(app)
             }
         };
 
-        let mut line = message.to_string();
-        line.push('\n');
+        let mut line = String::new();
+
+        for message in &messages {
+            line.push_str(&message.to_string());
+            line.push('\n');
+        }
+
+        if line.is_empty() {
+            continue;
+        }
 
         if write.write_all(line.as_bytes()).await.is_err() {
             break;
@@ -451,6 +486,20 @@ fn respond(app: &mut App, line: &str) -> Option<Json> {
             json!({ "id": Json::Null, "ok": false, "error": error.to_string() })
         }
     })
+}
+
+/// One `live` line per plugin that publishes a snapshot.
+fn live_json(app: &App) -> Vec<Json> {
+    app.live_all()
+        .into_iter()
+        .map(|(plugin, values)| {
+            json!({
+                "type": "live",
+                "plugin": plugin,
+                "values": values.iter().map(owned_json).collect::<Vec<Json>>(),
+            })
+        })
+        .collect()
 }
 
 fn notice_json(notice: &Notice) -> Json {

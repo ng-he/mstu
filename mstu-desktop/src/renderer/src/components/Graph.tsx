@@ -10,7 +10,13 @@ type Props = {
   connectors: Connector[]
   libraries: Library[]
   selectedConnector: string | null
+
+  /// Whether the pipeline has started: a node has no worker to switch before
+  /// that, so the power switches stay disabled.
+  started: boolean
+
   onSelectConnector: (id: string) => void
+  onToggleNode: (id: number, running: boolean) => void
   onMoveNode: (id: number, x: number, y: number) => void
   onLink: (from: number, to: number) => void
   registerFrame: (plugin: string, frame: HTMLIFrameElement | null) => void
@@ -166,7 +172,7 @@ function Graph(props: Props): JSX.Element {
           <div
             key={item.id}
             data-node={item.id}
-            className="node"
+            className={`node ${props.started && !item.running ? 'off' : ''}`}
             style={{ left: item.x, top: item.y, width: NODE_WIDTH, height: NODE_HEIGHT }}
           >
             {descriptor?.source && <span className="stripe" />}
@@ -174,6 +180,26 @@ function Graph(props: Props): JSX.Element {
             <div className="node-head" onPointerDown={(event) => startDrag(event, item)}>
               <span className="name">{item.name}</span>
               <span className="id">({item.plugin})</span>
+
+              <button
+                className={`power ${item.running ? 'on' : ''}`}
+                role="switch"
+                aria-checked={item.running}
+                aria-label={`${item.name} power`}
+                disabled={!props.started}
+                title={
+                  props.started
+                    ? item.running
+                      ? 'Switch this node off'
+                      : 'Switch this node on'
+                    : 'Start the pipeline to switch nodes'
+                }
+                /* The header drags the node, this must not. */
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => props.onToggleNode(item.id, !item.running)}
+              >
+                <span className="knob" />
+              </button>
             </div>
 
             <div className="node-body">

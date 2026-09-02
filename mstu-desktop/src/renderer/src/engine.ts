@@ -24,6 +24,9 @@ export const engine = {
   subscribe: (from: string, event: number, to: string, command: number, mappings: Mapping[]) =>
     call('subscribe', { from, event, to, command, mappings: pairs(mappings) }),
 
+  unsubscribe: (from: string, event: number, to: string, command: number) =>
+    call('unsubscribe', { from, event, to, command }),
+
   setParameter: (plugin: string, field: number, value: unknown) =>
     call('set_parameter', { plugin, field, value }),
 

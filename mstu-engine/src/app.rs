@@ -14,8 +14,9 @@ use crate::{
     runtime::{
         event::{self, Subscription},
         mapper::Mapper,
+        owned::{Owned, own_message},
         pipeline::{NodeId, Pipeline, PipelineId},
-        process::ProcessData,
+        process::{self, ProcessData},
     },
     utils::generate_plugin_id,
 };
@@ -187,6 +188,35 @@ impl App {
         Ok(())
     }
 
+    /// Reads one plugin's live snapshot, `None` when it publishes none.
+    pub fn live(&self, plugin_id: &str) -> Option<Vec<Owned>> {
+        let plugin = self.plugins.get(plugin_id)?;
+        let schema = (plugin.descriptor.live_schema)();
+
+        if schema.is_null() {
+            return None;
+        }
+
+        // The engine owns the message here too, the plugin only fills it.
+        let mut data = ProcessData::new(unsafe { (*schema).fields.len });
+        let mut writer = process::new_writer();
+        writer._engine_data = (&mut data as *mut ProcessData).cast();
+
+        if !(plugin.descriptor.live)(plugin.handle, &mut writer) {
+            return None;
+        }
+
+        Some(own_message(&data.output))
+    }
+
+    /// Snapshots every plugin that publishes live values.
+    pub fn live_all(&self) -> Vec<(String, Vec<Owned>)> {
+        self.plugins
+            .keys()
+            .filter_map(|id| Some((id.clone(), self.live(id)?)))
+            .collect()
+    }
+
     /// Invokes `command` on `to` whenever `from` publishes `event`.
     pub fn subscribe(
         &mut self,
@@ -206,6 +236,22 @@ impl App {
         let subscription = Subscription::new(target.handle, target.descriptor, command, mapper);
 
         event::manager().subscribe(from, event, subscription);
+
+        Ok(())
+    }
+
+    /// Stops invoking `command` on `to` when `from` publishes `event`.
+    pub fn unsubscribe(&mut self, from: &str, event: usize, to: &str, command: usize) -> Result<()> {
+        let target = self.plugin(to)?;
+        let handle = target.handle;
+
+        if !event::manager().unsubscribe(from, event, handle, command) {
+            return Err(format!(
+                "'{to}' command {command} is not subscribed to event {event} of '{from}'"
+            ));
+        }
+
+        log_info!("unsubscribe: '{from}' event {event} -> '{to}' command {command}");
 
         Ok(())
     }
@@ -373,7 +419,12 @@ impl Drop for App {
         // Workers hold plugin handles, so they have to go first.
         self.pipelines.clear();
 
+        // The event manager is static and outlives this app: a subscription
+        // left behind would invoke a released plugin.
+        let mut manager = event::manager();
+
         for plugin in self.plugins.values() {
+            manager.forget(&plugin.id, plugin.handle);
             (plugin.descriptor.release)(plugin.handle);
         }
     }

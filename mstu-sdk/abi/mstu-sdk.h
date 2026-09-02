@@ -306,6 +306,14 @@ typedef struct PluginDescriptor {
    * Invokes a command.
    */
   bool (*invoke)(PluginHandle handle, uintptr_t command, const struct Message *input);
+  /**
+   * Returns the schema of the live snapshot the UI shows, null when there is none.
+   */
+  const struct Schema *(*live_schema)(void);
+  /**
+   * Fills the current live values, polled by the host while `process` may be running.
+   */
+  bool (*live)(PluginHandle handle, struct Writer *output);
 } PluginDescriptor;
 
 const struct Value *value_get(struct Slice_Value slice, uintptr_t index);

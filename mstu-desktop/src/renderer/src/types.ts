@@ -45,6 +45,11 @@ export type Node = {
   library: string
   name: string
   ui: boolean
+
+  /// Whether the node is processing right now. Nothing runs before the
+  /// pipeline starts, since a node has no worker until then.
+  running: boolean
+
   x: number
   y: number
 }

@@ -26,6 +26,7 @@ export class Engine {
 
   constructor(
     private onEvent: (message: Json) => void,
+    private onLive: (message: Json) => void,
     private onStatus: (connected: boolean) => void
   ) {}
 
@@ -71,6 +72,11 @@ export class Engine {
 
     if (message.type === 'event') {
       this.onEvent(message)
+      return
+    }
+
+    if (message.type === 'live') {
+      this.onLive(message)
       return
     }
 

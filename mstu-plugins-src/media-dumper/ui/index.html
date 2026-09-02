@@ -168,6 +168,10 @@
         invoke: (command, payload = []) => host.send({ type: 'invoke', command, payload })
       }
 
+      /// The dot lights while the byte count is still moving.
+      let written = 0
+      let running = false
+
       const humanSize = (bytes) => {
         const units = ['B', 'KB', 'MB', 'GB']
         let size = bytes
@@ -197,13 +201,24 @@
           return
         }
 
-        if (data.type === 'state') {
-          const open = Boolean(data.file)
+        if (data.type === 'live') {
+          // live [file, chunks, bytes]
+          const [file, , bytes] = data.payload
+          const open = Boolean(file)
 
-          el('file').textContent = data.file ?? 'no file open'
-          el('size').textContent = humanSize(data.written ?? 0)
-          el('dot').classList.toggle('on', Boolean(data.running) && open)
+          running = open && bytes !== written
+          written = bytes ?? 0
+
+          el('file').textContent = open ? file : 'no file open'
+          el('size').textContent = humanSize(written)
+          el('dot').classList.toggle('on', running)
           el('finish').disabled = !open
+
+          return
+        }
+
+        if (data.type === 'state') {
+          if (!data.running) el('dot').classList.remove('on')
         }
       })
 

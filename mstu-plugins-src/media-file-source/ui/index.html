@@ -190,9 +190,22 @@
           return
         }
 
-        if (data.type === 'state') {
-          samples = data.samples ?? samples
+        if (data.type === 'live') {
+          // live [samples, ended]
+          const [count, ended] = data.payload
+
+          samples = count ?? 0
           el('samples').textContent = samples.toLocaleString()
+
+          if (ended) {
+            el('state').textContent = 'end of file'
+            el('dot').classList.remove('on')
+          }
+
+          return
+        }
+
+        if (data.type === 'state') {
           el('state').textContent = data.running ? 'reading' : 'idle'
           el('dot').classList.toggle('on', Boolean(data.running))
         }

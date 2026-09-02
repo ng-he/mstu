@@ -4,6 +4,10 @@ use std::{
     io::{BufWriter, Write},
     path::PathBuf,
     ptr,
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -27,11 +31,14 @@ pub struct MediaDumperPlugin {
     log: Logger,
     output_dir: String,
     current_filename: String,
-    output: Option<BufWriter<File>>,
+    /// Locked: a `file.ended` subscription finishes the file from the source's
+    /// worker thread while this plugin's own worker may be writing.
+    output: Mutex<Option<BufWriter<File>>>,
 
-    /// Written to the current file, reported on finish.
-    chunks: u64,
-    bytes: u64,
+    /// Written to the current file, reported on finish. Atomic: the host polls
+    /// them while `process` runs.
+    chunks: AtomicU64,
+    bytes: AtomicU64,
 }
 
 impl MediaDumperPlugin {
@@ -43,9 +50,9 @@ impl MediaDumperPlugin {
             id,
             output_dir: String::new(),
             current_filename: String::new(),
-            output: None,
-            chunks: 0,
-            bytes: 0,
+            output: Mutex::new(None),
+            chunks: AtomicU64::new(0),
+            bytes: AtomicU64::new(0),
         }
     }
 
@@ -81,38 +88,38 @@ impl MediaDumperPlugin {
 
         log_info!(self.log, "writing {codec} to '{}'", path.display());
 
-        self.output = Some(BufWriter::new(file));
-        self.chunks = 0;
-        self.bytes = 0;
+        *self.output.lock().unwrap() = Some(BufWriter::new(file));
+        self.chunks.store(0, Ordering::Relaxed);
+        self.bytes.store(0, Ordering::Relaxed);
 
         self.write(extras)
     }
 
     fn write(&mut self, data: &[u8]) -> bool {
-        if self.output.is_none() {
-            log_warn!(self.log, "dropped {} byte(s), no file open", data.len());
-            return true;
-        }
+        {
+            let mut output = self.output.lock().unwrap();
 
-        if let Some(writer) = self.output.as_mut() {
+            let Some(writer) = output.as_mut() else {
+                log_warn!(self.log, "dropped {} byte(s), no file open", data.len());
+                return true;
+            };
+
             if let Err(e) = writer.write_all(data) {
                 log_error!(self.log, "{e}");
                 return false;
             }
         }
 
-        self.chunks += 1;
-        self.bytes += data.len() as u64;
+        let chunks = self.chunks.fetch_add(1, Ordering::Relaxed) + 1;
+        let bytes = self.bytes.fetch_add(data.len() as u64, Ordering::Relaxed) + data.len() as u64;
 
         log_trace!(self.log, "wrote {} byte(s)", data.len());
 
         // A per-write log is far too loud, so mark progress now and then.
-        if self.chunks % 1000 == 0 {
+        if chunks % 1000 == 0 {
             log_debug!(
                 self.log,
-                "{} chunk(s), {} byte(s) into '{}'",
-                self.chunks,
-                self.bytes,
+                "{chunks} chunk(s), {bytes} byte(s) into '{}'",
                 self.current_filename
             );
         }
@@ -121,7 +128,9 @@ impl MediaDumperPlugin {
     }
 
     fn finish(&mut self) -> bool {
-        if let Some(mut writer) = self.output.take() {
+        let taken = self.output.lock().unwrap().take();
+
+        if let Some(mut writer) = taken {
             if let Err(e) = writer.flush() {
                 log_error!(self.log, "{e}");
                 return false;
@@ -132,8 +141,8 @@ impl MediaDumperPlugin {
                 "finished {}/{}: {} chunk(s), {} byte(s)",
                 self.output_dir,
                 self.current_filename,
-                self.chunks,
-                self.bytes
+                self.chunks.load(Ordering::Relaxed),
+                self.bytes.load(Ordering::Relaxed)
             );
         }
 
@@ -227,6 +236,27 @@ extern "C" fn ui() -> Str {
     Str::from_static("media-dumper-ui")
 }
 
+extern "C" fn live_schema() -> *const Schema {
+    &schemas::LIVE_SCHEMA
+}
+
+/// Polled by the host while `process` runs, so the counters are atomics.
+extern "C" fn live(instance: PluginHandle, output: *mut message::Writer) -> bool {
+    let plugin = unsafe { &*(instance as *mut MediaDumperPlugin) };
+    let output = unsafe { &mut *output };
+
+    let name = match plugin.output.lock().unwrap().is_some() {
+        true => Str::new(plugin.current_filename.as_str()),
+        false => Str::from_static(""),
+    };
+
+    (output.set_str)(output, 0, name);
+    (output.set_uint)(output, 1, plugin.chunks.load(Ordering::Relaxed));
+    (output.set_uint)(output, 2, plugin.bytes.load(Ordering::Relaxed));
+
+    true
+}
+
 extern "C" fn events() -> Slice<EventDescriptor> {
     Slice::empty()
 }
@@ -281,6 +311,9 @@ static PLUGIN: PluginDescriptor = PluginDescriptor {
     events,
     commands,
     invoke,
+
+    live_schema,
+    live,
 };
 
 #[unsafe(no_mangle)]

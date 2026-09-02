@@ -16,6 +16,23 @@ pub static SETTINGS_SCHEMA: Schema = Schema {
     fields: slice!(SETTINGS_SCHEMA_FIELDS),
 };
 
+pub static LIVE_SCHEMA_FIELDS: [Field; 2] = [
+    Field {
+        name: Str::from_static("samples"),
+        ty: &TYPE_U64,
+        description: Str::from_static("Samples read since the file was opened."),
+    },
+    Field {
+        name: Str::from_static("ended"),
+        ty: &TYPE_BOOL,
+        description: Str::from_static("Whether the reader has reached the end of the file."),
+    },
+];
+
+pub static LIVE_SCHEMA: Schema = Schema {
+    fields: slice!(LIVE_SCHEMA_FIELDS),
+};
+
 pub static VIDEO_OUTPUT_SCHEMA_FIELDS: [Field; 5] = [
     Field {
         name: Str::from_static("start_time"),

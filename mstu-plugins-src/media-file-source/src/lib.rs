@@ -1,4 +1,8 @@
-use std::{path::PathBuf, ptr, vec};
+use std::{
+    path::PathBuf, ptr,
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    vec,
+};
 
 use mstu_media::{
     self as media,
@@ -33,9 +37,9 @@ pub struct MediaFileSourcePlugin {
     sample_reader: Option<Box<dyn SampleReader>>,
 
     /// Samples read since the file was opened, and whether the end was
-    /// already reported.
-    samples: u64,
-    ended: bool,
+    /// already reported. Atomic: the host polls them while `process` runs.
+    samples: AtomicU64,
+    ended: AtomicBool,
 }
 
 impl MediaFileSourcePlugin {
@@ -48,15 +52,15 @@ impl MediaFileSourcePlugin {
             id,
             filename: String::new(),
             sample_reader: None,
-            samples: 0,
-            ended: false,
+            samples: AtomicU64::new(0),
+            ended: AtomicBool::new(false),
         }
     }
 
     fn open(&mut self, path: PathBuf) -> bool {
         self.filename = path.to_string_lossy().to_string();
-        self.samples = 0;
-        self.ended = false;
+        self.samples.store(0, Ordering::Relaxed);
+        self.ended.store(false, Ordering::Relaxed);
 
         if path.extension().and_then(|s| s.to_str()) == Some("mp4") {
             match mp4::open(path) {
@@ -139,24 +143,31 @@ impl MediaFileSourcePlugin {
             None => {
                 // The source keeps spinning at the end of the file, so say so
                 // once instead of every round.
-                if !self.ended {
-                    self.ended = true;
-
+                if !self.ended.swap(true, Ordering::Relaxed) {
                     log_info!(
                         self.log,
                         "end of '{}' after {} sample(s)",
                         self.filename,
-                        self.samples
+                        self.samples.load(Ordering::Relaxed)
                     );
+
+                    // file.ended carries no payload, but it still has to be
+                    // queued before it can be published.
+                    unsafe {
+                        ((*self.ctx).new_event)(Str::new(self.id.as_str()), 1);
+                        ((*self.ctx).publish_events)(Str::new(self.id.as_str()), 1);
+                    }
+
+                    log_info!(self.log, "published file.ended");
                 }
 
                 return Ok(());
             }
         };
 
-        self.samples += 1;
+        let samples = self.samples.fetch_add(1, Ordering::Relaxed) + 1;
 
-        log_trace!(self.log, "sample {}: {}", self.samples, sample);
+        log_trace!(self.log, "sample {samples}: {sample}");
 
         (output.set_uint)(output, 0, sample.start_time);
         (output.set_uint)(output, 1, sample.duration as u64);
@@ -193,7 +204,7 @@ extern "C" fn release(instance: PluginHandle) {
     unsafe {
         let plugin = Box::from_raw(instance as *mut MediaFileSourcePlugin);
 
-        log_info!(plugin.log, "released after {} sample(s)", plugin.samples);
+        log_info!(plugin.log, "released after {} sample(s)", plugin.samples.load(Ordering::Relaxed));
 
         drop(plugin);
     }
@@ -251,6 +262,21 @@ extern "C" fn ui() -> Str {
     Str::from_static("media-file-source-ui")
 }
 
+extern "C" fn live_schema() -> *const Schema {
+    &schemas::LIVE_SCHEMA
+}
+
+/// Polled by the host while `process` runs, so it only reads atomics.
+extern "C" fn live(instance: PluginHandle, output: *mut message::Writer) -> bool {
+    let plugin = unsafe { &*(instance as *mut MediaFileSourcePlugin) };
+    let output = unsafe { &mut *output };
+
+    (output.set_uint)(output, 0, plugin.samples.load(Ordering::Relaxed));
+    (output.set_bool)(output, 1, plugin.ended.load(Ordering::Relaxed));
+
+    true
+}
+
 extern "C" fn events() -> Slice<EventDescriptor> {
     slice!(schemas::EVENTS)
 }
@@ -283,6 +309,9 @@ static PLUGIN: PluginDescriptor = PluginDescriptor {
     events,
     commands,
     invoke,
+
+    live_schema,
+    live,
 };
 
 #[unsafe(no_mangle)]

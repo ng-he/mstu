@@ -15,6 +15,7 @@ const send = (channel: string, payload: unknown): void => {
 
 const engine = new Engine(
   (message) => send('mstu:event', message),
+  (message) => send('mstu:live', message),
   (connected) => {
     console.log(`engine ${connected ? 'connected' : 'disconnected'} (${socketPath()})`)
     send('mstu:status', connected)
