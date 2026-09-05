@@ -149,6 +149,42 @@ impl App {
         Ok(id)
     }
 
+    /// Takes a plugin out of every pipeline and releases it.
+    ///
+    /// Async because a worker task holds the plugin handle: it has to finish
+    /// before the plugin can be released.
+    pub async fn remove_plugin(&mut self, plugin_id: &str) -> Result<()> {
+        let (handle, descriptor) = {
+            let plugin = self.plugin(plugin_id)?;
+            (plugin.handle, plugin.descriptor)
+        };
+
+        let mut tasks = Vec::new();
+
+        for pipeline in self.pipelines.values_mut() {
+            for node_id in pipeline.nodes_of(handle) {
+                log_info!("pipeline {}: removed node {node_id}", pipeline.id);
+
+                if let Some(task) = pipeline.remove_node(node_id) {
+                    tasks.push(task);
+                }
+            }
+        }
+
+        for task in tasks {
+            let _ = task.await;
+        }
+
+        // Nothing runs this plugin now, so the handle is free to release.
+        event::manager().forget(plugin_id, handle);
+        (descriptor.release)(handle);
+        self.plugins.remove(plugin_id);
+
+        log_info!("removed plugin '{plugin_id}'");
+
+        Ok(())
+    }
+
     /// Folder holding the plugin UI, if it has one.
     pub fn plugin_ui(&self, plugin_id: &str) -> Result<Option<&Path>> {
         Ok(self.plugin(plugin_id)?.ui.as_deref())

@@ -226,7 +226,7 @@ fn as_mapper(params: &Json, name: &str) -> Result<Mapper, String> {
 
 // ---------- methods ----------
 
-fn dispatch(app: &mut App, method: &str, params: &Json) -> Result<Json, String> {
+async fn dispatch(app: &mut App, method: &str, params: &Json) -> Result<Json, String> {
     match method {
         "describe" => {
             let mut libraries: Vec<Json> = app
@@ -252,6 +252,12 @@ fn dispatch(app: &mut App, method: &str, params: &Json) -> Result<Json, String> 
                 .map(|path| path.display().to_string());
 
             Ok(json!({ "plugin": plugin, "library": library, "ui": ui }))
+        }
+
+        "remove_plugin" => {
+            app.remove_plugin(&as_str(params, "plugin")?).await?;
+
+            Ok(json!({}))
         }
 
         "add_node" => Ok(json!({
@@ -417,7 +423,7 @@ async fn serve_client(app: &mut App, stream: UnixStream) {
     loop {
         let messages = tokio::select! {
             line = lines.next_line() => match line {
-                Ok(Some(line)) => match respond(app, &line) {
+                Ok(Some(line)) => match respond(app, &line).await {
                     Some(response) => vec![response],
                     None => continue,
                 },
@@ -462,7 +468,7 @@ async fn serve_client(app: &mut App, stream: UnixStream) {
     drain(&mut notices);
 }
 
-fn respond(app: &mut App, line: &str) -> Option<Json> {
+async fn respond(app: &mut App, line: &str) -> Option<Json> {
     if line.trim().is_empty() {
         return None;
     }
@@ -471,7 +477,7 @@ fn respond(app: &mut App, line: &str) -> Option<Json> {
         Ok(request) => {
             log_debug!("<- #{} {} {}", request.id, request.method, request.params);
 
-            match dispatch(app, &request.method, &request.params) {
+            match dispatch(app, &request.method, &request.params).await {
                 Ok(result) => json!({ "id": request.id, "ok": true, "result": result }),
                 Err(error) => {
                     log_warn!("#{} {} failed: {error}", request.id, request.method);

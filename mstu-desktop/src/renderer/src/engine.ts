@@ -18,6 +18,9 @@ export const engine = {
   addNode: (pipeline: number, plugin: string) =>
     call<{ node: number }>('add_node', { pipeline, plugin }),
 
+  /// Takes the plugin out of every pipeline and releases it.
+  removePlugin: (plugin: string) => call('remove_plugin', { plugin }),
+
   connect: (pipeline: number, from: number, to: number, mappings: Mapping[]) =>
     call('connect', { pipeline, from, to, mappings: pairs(mappings) }),
 

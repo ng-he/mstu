@@ -17,6 +17,7 @@ type Props = {
 
   onSelectConnector: (id: string) => void
   onToggleNode: (id: number, running: boolean) => void
+  onRemoveNode: (id: number) => void
   onMoveNode: (id: number, x: number, y: number) => void
   onLink: (from: number, to: number) => void
   registerFrame: (plugin: string, frame: HTMLIFrameElement | null) => void
@@ -199,6 +200,16 @@ function Graph(props: Props): JSX.Element {
                 onClick={() => props.onToggleNode(item.id, !item.running)}
               >
                 <span className="knob" />
+              </button>
+
+              <button
+                className="remove"
+                title="Remove this plugin"
+                aria-label={`Remove ${item.name}`}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => props.onRemoveNode(item.id)}
+              >
+                ✕
               </button>
             </div>
 

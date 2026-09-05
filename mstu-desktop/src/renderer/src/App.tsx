@@ -349,6 +349,30 @@ function App(): JSX.Element {
     }
   }
 
+  /// Removing a node releases its plugin, so every link and subscription that
+  /// referenced it goes with it.
+  async function removeNode(id: number): Promise<void> {
+    const node = nodes.find((item) => item.id === id)
+    if (!node) return
+
+    try {
+      await engine.removePlugin(node.plugin)
+    } catch (problem) {
+      report(problem)
+      return
+    }
+
+    const orphaned = connectors.filter((item) => item.from === id || item.to === id)
+
+    setNodes((current) => current.filter((item) => item.id !== id))
+    setConnectors((current) => current.filter((item) => item.from !== id && item.to !== id))
+
+    if (orphaned.some((item) => item.id === connectorId)) setConnectorId(null)
+
+    frames.current.delete(node.plugin)
+    settings.current.delete(node.plugin)
+  }
+
   /// A node only has a worker to switch once the pipeline has started.
   async function toggleNode(id: number, next: boolean): Promise<void> {
     if (pipeline === null) return
@@ -399,6 +423,7 @@ function App(): JSX.Element {
             started={running}
             onSelectConnector={setConnectorId}
             onToggleNode={toggleNode}
+            onRemoveNode={removeNode}
             onLink={createLink}
             onMoveNode={(id, x, y) =>
               setNodes((current) =>

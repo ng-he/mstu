@@ -8,7 +8,10 @@ use std::{
 };
 
 use mstu_sdk::{PluginDescriptor, PluginHandle, ProcessContext, Schema, ValueKind};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::{
+    sync::mpsc::{UnboundedReceiver, UnboundedSender},
+    task::JoinHandle,
+};
 
 use crate::{
     log_debug, log_trace, log_warn,
@@ -47,6 +50,10 @@ pub struct Node {
 
     pub running: Arc<AtomicBool>,
 
+    /// Cleared to tell the task to leave its loop, so the handle stops being
+    /// used before the plugin is released.
+    pub alive: Arc<AtomicBool>,
+
     /// A node that fails does so every round, so failures are counted and
     /// reported sparsely instead of at message rate.
     pub failures: AtomicUsize,
@@ -71,6 +78,9 @@ pub struct Output {
 pub struct Worker {
     pub node_id: NodeId,
 
+    /// Which plugin instance this node runs, so removing one finds its nodes.
+    pub plugin: PluginHandle,
+
     /// Kept here too: the node itself moves into its task on start.
     pub name: String,
 
@@ -85,6 +95,12 @@ pub struct Worker {
 
     /// Shared with the node task, flipped to switch the node on and off.
     pub running: Arc<AtomicBool>,
+
+    /// Shared with the node task, cleared to make it exit.
+    pub alive: Arc<AtomicBool>,
+
+    /// Awaited on removal: the task holds the plugin handle until it ends.
+    pub task: JoinHandle<()>,
 
     pub is_source: bool,
 }
@@ -140,6 +156,7 @@ impl Pipeline {
             plugin,
             descriptor,
             running: Arc::new(AtomicBool::new(!is_source(descriptor))),
+            alive: Arc::new(AtomicBool::new(true)),
             failures: AtomicUsize::new(0),
         };
 
@@ -215,29 +232,73 @@ impl Pipeline {
             }
         );
 
-        self.workers.insert(
+        let worker = Worker {
             node_id,
-            Worker {
-                node_id,
-                name: node.name.clone(),
-                tx,
-                input_field_count: schema_field_count((node.descriptor.process_input_schema)()),
-                input_kinds: schema::expected_kinds((node.descriptor.process_input_schema)()),
-                running: node.running.clone(),
-                is_source: is_source(node.descriptor),
-            },
-        );
+            plugin: node.plugin,
+            name: node.name.clone(),
+            tx,
+            input_field_count: schema_field_count((node.descriptor.process_input_schema)()),
+            input_kinds: schema::expected_kinds((node.descriptor.process_input_schema)()),
+            running: node.running.clone(),
+            alive: node.alive.clone(),
+            is_source: is_source(node.descriptor),
 
-        if is_source(node.descriptor) {
-            tokio::spawn(Self::run_source(node, output_tx));
-        } else {
-            tokio::spawn(Self::run_worker(node, rx, output_tx));
+            task: match is_source(node.descriptor) {
+                true => tokio::spawn(Self::run_source(node, output_tx)),
+                false => tokio::spawn(Self::run_worker(node, rx, output_tx)),
+            },
+        };
+
+        self.workers.insert(node_id, worker);
+    }
+
+    /// Node ids running a given plugin instance, started or not.
+    pub fn nodes_of(&self, plugin: PluginHandle) -> Vec<NodeId> {
+        let started = self
+            .workers
+            .values()
+            .filter(|worker| worker.plugin == plugin)
+            .map(|worker| worker.node_id);
+
+        self.nodes
+            .values()
+            .filter(|node| node.plugin == plugin)
+            .map(|node| node.id)
+            .chain(started)
+            .collect()
+    }
+
+    /// Unlinks a node and tells its task to stop, returning the task to await.
+    ///
+    /// The task holds the plugin handle, so the caller must await it before
+    /// releasing the plugin.
+    pub fn remove_node(&mut self, node_id: NodeId) -> Option<JoinHandle<()>> {
+        self.connectors.remove(&node_id);
+
+        for connectors in self.connectors.values_mut() {
+            connectors.retain(|connector| connector.to_node_id != node_id);
         }
+
+        self.parent_lookup.remove(&node_id);
+        self.parent_lookup.retain(|_, parent| *parent != node_id);
+
+        // Never started, so there is no task and nothing holds the handle.
+        if let Some(node) = self.nodes.remove(&node_id) {
+            node.alive.store(false, Ordering::Relaxed);
+            return None;
+        }
+
+        let worker = self.workers.remove(&node_id)?;
+        worker.alive.store(false, Ordering::Relaxed);
+
+        // The rest of the worker, its sender included, drops here: that is what
+        // ends a non-source task.
+        Some(worker.task)
     }
 
     /// A source has no input to wait on: it produces while it is switched on.
     async fn run_source(node: Node, output_tx: UnboundedSender<Output>) {
-        loop {
+        while node.alive.load(Ordering::Relaxed) {
             if !node.running.load(Ordering::Relaxed) {
                 tokio::time::sleep(IDLE_POLL).await;
                 continue;
@@ -271,6 +332,10 @@ impl Pipeline {
         output_tx: UnboundedSender<Output>,
     ) {
         while let Some(input) = rx.recv().await {
+            if !node.alive.load(Ordering::Relaxed) {
+                break;
+            }
+
             // Messages that arrive while the node is off are dropped.
             if !node.running.load(Ordering::Relaxed) {
                 continue;

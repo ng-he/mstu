@@ -460,6 +460,16 @@ input:focus {
   cursor: not-allowed;
 }
 
+.node-head .remove {
+  flex: none;
+  align-self: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+}
+
 /* A node switched off mid-run: still there, plainly not working. */
 .node.off .node-body {
   opacity: 0.45;
