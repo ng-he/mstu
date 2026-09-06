@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import Graph from './components/Graph'
+import Graph, {
+  MAX_NODE_HEIGHT,
+  MAX_NODE_WIDTH,
+  MIN_NODE_HEIGHT,
+  MIN_NODE_WIDTH,
+  NODE_HEIGHT,
+  NODE_WIDTH
+} from './components/Graph'
 import Inspector from './components/Inspector'
 import Sidebar from './components/Sidebar'
 import Toolbar from './components/Toolbar'
@@ -9,6 +16,9 @@ import type { Connector, Field, Library, Mapping, Node, Subscription } from './t
 
 let nextId = 1
 const newId = (prefix: string): string => `${prefix}${nextId++}`
+
+const clamp = (value: number, low: number, high: number): number =>
+  Math.min(high, Math.max(low, value))
 
 /// A new row defaults to the first unmapped target field and a source field
 /// of the same type: 0 -> 0 is usually a type mismatch the engine will drop.
@@ -167,6 +177,22 @@ function App(): JSX.Element {
 
       try {
         if (data.type === 'ready') {
+          // A plugin UI may ask for the box it needs, within what the canvas
+          // is willing to give it.
+          if (data.width || data.height) {
+            setNodes((current) =>
+              current.map((node) =>
+                node.plugin === plugin
+                  ? {
+                      ...node,
+                      width: clamp(data.width ?? node.width, MIN_NODE_WIDTH, MAX_NODE_WIDTH),
+                      height: clamp(data.height ?? node.height, MIN_NODE_HEIGHT, MAX_NODE_HEIGHT)
+                    }
+                  : node
+              )
+            )
+          }
+
           post(plugin, { type: 'init', settings: settings.current.get(plugin) ?? {} })
           return
         }
@@ -219,6 +245,8 @@ function App(): JSX.Element {
           name: library.name,
           ui: Boolean(created.ui),
           running: false,
+          width: NODE_WIDTH,
+          height: NODE_HEIGHT,
           x: 60 + current.length * 80,
           y: 80 + current.length * 60
         }

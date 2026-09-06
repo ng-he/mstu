@@ -155,6 +155,9 @@
       /// Settings field 0 is `path`, per the plugin settings schema.
       const PATH_FIELD = 0
 
+      /// The box this UI wants on the canvas; the host clamps it.
+      const SIZE = { width: 300, height: 210 }
+
       const host = {
         send: (message) => parent.postMessage(message, '*'),
         setParameter: (field, value) => host.send({ type: 'set_parameter', field, value })
@@ -211,7 +214,7 @@
         }
       })
 
-      host.send({ type: 'ready' })
+      host.send({ type: 'ready', ...SIZE })
     </script>
   </body>
 </html>

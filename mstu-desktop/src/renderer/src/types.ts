@@ -50,6 +50,10 @@ export type Node = {
   /// pipeline starts, since a node has no worker until then.
   running: boolean
 
+  /// Size of the node box, from the plugin UI's `ready` message once it loads.
+  width: number
+  height: number
+
   x: number
   y: number
 }

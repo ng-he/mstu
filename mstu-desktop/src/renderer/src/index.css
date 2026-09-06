@@ -307,6 +307,44 @@ input:focus {
   background-size: 22px 22px;
 }
 
+/* Everything that lives in graph coordinates, moved and scaled as one. */
+.viewport {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.graph.panning {
+  cursor: grabbing;
+}
+
+.zoom-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-chrome);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.zoom-controls .level {
+  min-width: 46px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.zoom-controls .level:hover {
+  color: var(--text);
+}
+
 /* An svg is a replaced element: without an explicit size it keeps its
    intrinsic 300x150 and clips every curve drawn outside it. */
 .edges {
@@ -370,7 +408,6 @@ input:focus {
   position: absolute;
   /* Own stacking context, so this node's ports cannot paint over another. */
   z-index: 1;
-  width: 260px;
   background: var(--bg-card);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);

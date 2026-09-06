@@ -172,6 +172,9 @@
       let written = 0
       let running = false
 
+      /// The box this UI wants on the canvas; the host clamps it.
+      const SIZE = { width: 300, height: 220 }
+
       const humanSize = (bytes) => {
         const units = ['B', 'KB', 'MB', 'GB']
         let size = bytes
@@ -222,7 +225,7 @@
         }
       })
 
-      host.send({ type: 'ready' })
+      host.send({ type: 'ready', ...SIZE })
     </script>
   </body>
 </html>
