@@ -100,6 +100,26 @@ function App(): JSX.Element {
     frames.current.get(plugin)?.contentWindow?.postMessage(message, '*')
   }, [])
 
+  /// Settings plus the schemas the UI SDK needs to address them by name.
+  const initMessage = useCallback(
+    (plugin: string) => {
+      const node = nodes.find((item) => item.plugin === plugin)
+      const library = libraries.find((item) => item.key === node?.library)
+
+      return {
+        type: 'init',
+        settings: settings.current.get(plugin) ?? {},
+        schemas: {
+          settings: library?.settings ?? null,
+          live: library?.live ?? null,
+          events: library?.events ?? [],
+          commands: library?.commands ?? []
+        }
+      }
+    },
+    [nodes, libraries]
+  )
+
   // ---------- engine connection ----------
 
   useEffect(() => {
@@ -193,7 +213,7 @@ function App(): JSX.Element {
             )
           }
 
-          post(plugin, { type: 'init', settings: settings.current.get(plugin) ?? {} })
+          post(plugin, initMessage(plugin))
           return
         }
 
@@ -216,7 +236,7 @@ function App(): JSX.Element {
           await engine.setParameter(plugin, data.field, picked)
           const current = settings.current.get(plugin) ?? {}
           settings.current.set(plugin, { ...current, [data.field]: picked })
-          post(plugin, { type: 'init', settings: settings.current.get(plugin) })
+          post(plugin, initMessage(plugin))
         }
       } catch (problem) {
         report(problem)
@@ -225,7 +245,7 @@ function App(): JSX.Element {
 
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [post])
+  }, [post, initMessage])
 
   // ---------- graph editing ----------
 
@@ -462,9 +482,7 @@ function App(): JSX.Element {
               if (frame) frames.current.set(plugin, frame)
               else frames.current.delete(plugin)
             }}
-            onFrameReady={(plugin) =>
-              post(plugin, { type: 'init', settings: settings.current.get(plugin) ?? {} })
-            }
+            onFrameReady={(plugin) => post(plugin, initMessage(plugin))}
           />
 
           <Inspector

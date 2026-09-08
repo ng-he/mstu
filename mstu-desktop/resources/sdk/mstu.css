@@ -1,0 +1,173 @@
+/* Theme and building blocks for plugin UIs.
+   Kept in step with the host so a plugin looks native without copying it. */
+
+:root {
+  --bg: #262626;
+  --bg-input: #1a1a1a;
+  --border: #3d3d3d;
+  --text: #e6e6e6;
+  --text-dim: #969696;
+  --text-faint: #6b6b6b;
+  --accent: #ff6c37;
+  --green: #3ba55d;
+  --red: #f04438;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12px;
+}
+
+/* ---------- form ---------- */
+
+.label {
+  margin-bottom: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.field {
+  display: flex;
+  gap: 5px;
+}
+
+.field input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.field button {
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.field button:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+/* ---------- readouts ---------- */
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.chip {
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(255, 108, 55, 0.14);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.dim {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A path reads better truncated from the left. */
+.path {
+  margin-top: 9px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+/* ---------- status bar ---------- */
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid #303030;
+  color: var(--text-dim);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: none;
+}
+
+.dot.on {
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(59, 165, 93, 0.16);
+}
+
+/* Pushes a value to the right of the status bar. */
+.count {
+  margin-left: auto;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text);
+}
+
+/* ---------- actions ---------- */
+
+.action {
+  margin-left: auto;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.action:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

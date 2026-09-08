@@ -3,141 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <title>Media dumper</title>
-    <style>
-      :root {
-        --bg: #262626;
-        --bg-input: #1a1a1a;
-        --border: #3d3d3d;
-        --text: #e6e6e6;
-        --text-dim: #969696;
-        --text-faint: #6b6b6b;
-        --accent: #ff6c37;
-        --green: #3ba55d;
-        color-scheme: dark;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      body {
-        margin: 0;
-        padding: 10px;
-        background: var(--bg);
-        color: var(--text);
-        font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-        font-size: 12px;
-      }
-
-      .label {
-        margin-bottom: 5px;
-        font-size: 10px;
-        font-weight: 600;
-        letter-spacing: 0.07em;
-        text-transform: uppercase;
-        color: var(--text-faint);
-      }
-
-      .field {
-        display: flex;
-        gap: 5px;
-      }
-
-      .field input {
-        flex: 1;
-        min-width: 0;
-        padding: 5px 7px;
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        background: var(--bg-input);
-        color: var(--text);
-        font: inherit;
-        font-size: 11px;
-        text-overflow: ellipsis;
-      }
-
-      .field input:focus {
-        outline: none;
-        border-color: var(--accent);
-      }
-
-      .field button {
-        padding: 0 9px;
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        background: none;
-        color: var(--text-dim);
-        font: inherit;
-        cursor: pointer;
-      }
-
-      .field button:hover {
-        color: var(--text);
-        border-color: var(--text-faint);
-      }
-
-      .file {
-        margin-top: 9px;
-        font-family: 'IBM Plex Mono', ui-monospace, monospace;
-        font-size: 10px;
-        color: var(--text-dim);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        direction: rtl;
-        text-align: left;
-      }
-
-      .status {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        margin-top: 9px;
-        padding-top: 9px;
-        border-top: 1px solid #303030;
-        color: var(--text-dim);
-      }
-
-      .dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: var(--text-faint);
-      }
-
-      .dot.on {
-        background: var(--green);
-        box-shadow: 0 0 0 3px rgba(59, 165, 93, 0.16);
-      }
-
-      .size {
-        font-family: 'IBM Plex Mono', ui-monospace, monospace;
-        font-size: 11px;
-        color: var(--text);
-      }
-
-      .finish {
-        margin-left: auto;
-        padding: 3px 9px;
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        background: none;
-        color: var(--text-dim);
-        font: inherit;
-        font-size: 11px;
-        cursor: pointer;
-      }
-
-      .finish:hover:not(:disabled) {
-        border-color: var(--accent);
-        color: var(--accent);
-      }
-
-      .finish:disabled {
-        opacity: 0.4;
-        cursor: default;
-      }
-    </style>
+    <link rel="stylesheet" href="./_sdk/mstu.css" />
   </head>
   <body>
     <div class="label">Output folder</div>
@@ -147,85 +13,51 @@
       <button id="browse" title="Choose a folder">…</button>
     </div>
 
-    <div class="file" id="file">no file open</div>
+    <div class="path" id="file">no file open</div>
 
     <div class="status">
       <span class="dot" id="dot"></span>
-      <span class="size" id="size">0 B</span>
-      <button class="finish" id="finish" disabled>Finish</button>
+      <span class="count" id="size">0 B</span>
+      <button class="action" id="finish" disabled>Finish</button>
     </div>
 
     <script type="module">
-      const el = (id) => document.getElementById(id)
+      import { connect, humanSize } from './_sdk/mstu.js'
 
-      /// Settings field 0 is `output_path`; command 1 is `write.finish`.
-      const OUTPUT_FIELD = 0
-      const FINISH_COMMAND = 1
-
-      const host = {
-        send: (message) => parent.postMessage(message, '*'),
-        setParameter: (field, value) => host.send({ type: 'set_parameter', field, value }),
-        invoke: (command, payload = []) => host.send({ type: 'invoke', command, payload })
-      }
+      const plugin = await connect({ width: 300, height: 220 })
+      const el = plugin.el
 
       /// The dot lights while the byte count is still moving.
       let written = 0
-      let running = false
-
-      /// The box this UI wants on the canvas; the host clamps it.
-      const SIZE = { width: 300, height: 220 }
-
-      const humanSize = (bytes) => {
-        const units = ['B', 'KB', 'MB', 'GB']
-        let size = bytes
-        let unit = 0
-
-        while (size >= 1024 && unit < units.length - 1) {
-          size /= 1024
-          unit++
-        }
-
-        return `${unit === 0 ? size : size.toFixed(1)} ${units[unit]}`
-      }
 
       el('dir').addEventListener('change', (event) =>
-        host.setParameter(OUTPUT_FIELD, event.target.value)
+        plugin.set('output_path', event.target.value)
       )
 
       el('browse').addEventListener('click', () =>
-        host.send({ type: 'pick', kind: 'directory', field: OUTPUT_FIELD })
+        plugin.pick('output_path', { kind: 'directory' })
       )
 
-      el('finish').addEventListener('click', () => host.invoke(FINISH_COMMAND))
+      el('finish').addEventListener('click', () => plugin.invoke('write.finish'))
 
-      window.addEventListener('message', ({ data }) => {
-        if (data.type === 'init') {
-          el('dir').value = data.settings?.[OUTPUT_FIELD] ?? ''
-          return
-        }
-
-        if (data.type === 'live') {
-          // live [file, chunks, bytes]
-          const [file, , bytes] = data.payload
-          const open = Boolean(file)
-
-          running = open && bytes !== written
-          written = bytes ?? 0
-
-          el('file').textContent = open ? file : 'no file open'
-          el('size').textContent = humanSize(written)
-          el('dot').classList.toggle('on', running)
-          el('finish').disabled = !open
-
-          return
-        }
-
-        if (data.type === 'state') {
-          if (!data.running) el('dot').classList.remove('on')
-        }
+      plugin.onSettings((settings) => {
+        el('dir').value = settings.output_path ?? ''
       })
 
-      host.send({ type: 'ready', ...SIZE })
+      plugin.onLive(({ file, bytes }) => {
+        const open = Boolean(file)
+
+        el('file').textContent = open ? file : 'no file open'
+        el('size').textContent = humanSize(bytes)
+        el('dot').classList.toggle('on', open && bytes !== written)
+        el('finish').disabled = !open
+
+        written = bytes ?? 0
+      })
+
+      plugin.onState(({ running }) => {
+        if (!running) el('dot').classList.remove('on')
+      })
     </script>
   </body>
 </html>

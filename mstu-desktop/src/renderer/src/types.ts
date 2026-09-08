@@ -33,6 +33,7 @@ export type Library = {
   input: Schema
   output: Schema
   settings: Schema
+  live: Schema
   events: Descriptor[]
   commands: Descriptor[]
 }

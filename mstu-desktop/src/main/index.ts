@@ -35,16 +35,23 @@ const CONTENT_TYPES: Record<string, string> = {
   '.png': 'image/png'
 }
 
+/// The UI SDK, served under every plugin's own origin so a plugin can import
+/// it without the host having to allow cross-origin module loads.
+const SDK_PREFIX = '/_sdk/'
+const SDK_FOLDER = join(__dirname, '../../resources/sdk')
+
 /// mstu-plugin://<plugin-id>/index.html -> <ui folder>/index.html
 function servePluginUi(request: Request): Promise<Response> | Response {
   const url = new URL(request.url)
-  const folder = uiFolders.get(url.hostname)
+  const sdk = url.pathname.startsWith(SDK_PREFIX)
+  const folder = sdk ? SDK_FOLDER : uiFolders.get(url.hostname)
 
   if (!folder) {
     return new Response('unknown plugin', { status: 404 })
   }
 
-  const file = resolve(join(folder, url.pathname === '/' ? 'index.html' : url.pathname))
+  const path = sdk ? url.pathname.slice(SDK_PREFIX.length) : url.pathname
+  const file = resolve(join(folder, path === '' || path === '/' ? 'index.html' : path))
 
   // A plugin UI may not reach outside its own folder.
   if (file !== resolve(folder) && !file.startsWith(resolve(folder) + sep)) {
