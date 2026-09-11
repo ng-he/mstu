@@ -2,21 +2,41 @@ use std::ptr;
 
 use mstu_sdk::{
     Data, EnumSchema, EnumVariant, EventDescriptor, Field, Schema, Slice, Str, TYPE_BOOL,
-    TYPE_BYTES, TYPE_I32, TYPE_STRING, TYPE_U32, TYPE_U64, Type, TypeKind::TypeEnum, TypeSchema,
+    TYPE_BYTES, TYPE_F64, TYPE_I32, TYPE_STRING, TYPE_U32, TYPE_U64, Type, TypeKind::TypeEnum,
+    TypeSchema,
     Value, ValueKind, slice,
 };
 
-pub static SETTINGS_SCHEMA_FIELDS: [Field; 1] = [Field {
-    name: Str::from_static("path"),
-    ty: &TYPE_STRING,
-    description: Str::from_static("Path to the media file."),
-}];
+pub static SETTINGS_SCHEMA_FIELDS: [Field; 4] = [
+    Field {
+        name: Str::from_static("path"),
+        ty: &TYPE_STRING,
+        description: Str::from_static("Path to the media file."),
+    },
+    Field {
+        name: Str::from_static("rate"),
+        ty: &TYPE_F64,
+        description: Str::from_static(
+            "Playback speed: 1.0 is real time, 2.0 twice as fast, 0 reads as fast as it can.",
+        ),
+    },
+    Field {
+        name: Str::from_static("loop"),
+        ty: &TYPE_BOOL,
+        description: Str::from_static("Start over at the end of the file instead of stopping."),
+    },
+    Field {
+        name: Str::from_static("position"),
+        ty: &TYPE_U64,
+        description: Str::from_static("Seeks to this position in microseconds."),
+    },
+];
 
 pub static SETTINGS_SCHEMA: Schema = Schema {
     fields: slice!(SETTINGS_SCHEMA_FIELDS),
 };
 
-pub static LIVE_SCHEMA_FIELDS: [Field; 2] = [
+pub static LIVE_SCHEMA_FIELDS: [Field; 4] = [
     Field {
         name: Str::from_static("samples"),
         ty: &TYPE_U64,
@@ -26,6 +46,16 @@ pub static LIVE_SCHEMA_FIELDS: [Field; 2] = [
         name: Str::from_static("ended"),
         ty: &TYPE_BOOL,
         description: Str::from_static("Whether the reader has reached the end of the file."),
+    },
+    Field {
+        name: Str::from_static("position"),
+        ty: &TYPE_U64,
+        description: Str::from_static("Time of the last sample read, in microseconds."),
+    },
+    Field {
+        name: Str::from_static("duration"),
+        ty: &TYPE_U64,
+        description: Str::from_static("Length of the file in microseconds, 0 when unknown."),
     },
 ];
 

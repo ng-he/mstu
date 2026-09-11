@@ -201,4 +201,27 @@ impl file::SampleReader for File {
             Err(err) => Err(err.to_string()),
         }
     }
+
+    fn timescale(&self) -> u32 {
+        self.reader.tracks[&self.video_track_id].timescale()
+    }
+
+    fn duration(&self) -> Option<u64> {
+        Some(self.reader.tracks[&self.video_track_id].media_duration())
+    }
+
+    fn rewind(&mut self) -> std::result::Result<(), String> {
+        self.current_sample_id = 1;
+        Ok(())
+    }
+
+    fn seek(&mut self, time: u64) -> bool {
+        let track = &self.reader.tracks[&self.video_track_id];
+
+        self.current_sample_id = track
+            .sync_sample_at_or_before(track.sample_at_time(time))
+            .max(1);
+
+        true
+    }
 }

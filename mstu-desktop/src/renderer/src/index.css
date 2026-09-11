@@ -408,6 +408,10 @@ input:focus {
   position: absolute;
   /* Own stacking context, so this node's ports cannot paint over another. */
   z-index: 1;
+  /* A column, so the body takes whatever height the head leaves. Not
+     overflow:hidden: the ports sit outside this box. */
+  display: flex;
+  flex-direction: column;
   background: var(--bg-card);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
@@ -420,6 +424,7 @@ input:focus {
 
 .node .stripe {
   position: absolute;
+  z-index: 2;
   left: 0;
   top: 0;
   bottom: 0;
@@ -517,23 +522,27 @@ input:focus {
 }
 
 .node-body {
-  min-height: 92px;
-  padding: 10px 12px 12px 14px;
+  flex: 1;
+  /* Lets the plugin UI shrink with the node instead of forcing it taller. */
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  overflow: hidden;
+  border-radius: 0 0 var(--radius) var(--radius);
 }
 
 .plugin-ui {
   flex: 1;
+  /* An iframe is inline by default, which leaves a descender gap below it. */
+  display: block;
   width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  border: 0;
   background: var(--bg-card);
 }
 
 .node-ui-slot {
   flex: 1;
+  margin: 10px 12px 12px 14px;
   display: grid;
   place-items: center;
   min-height: 56px;
@@ -541,6 +550,67 @@ input:focus {
   border-radius: 4px;
   color: var(--text-faint);
   font-size: 11px;
+}
+
+/* ---------- plugin popups ---------- */
+
+.popup {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+  min-height: 140px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  /* The browser's corner grip; the page iframe grows with it. */
+  resize: both;
+  overflow: hidden;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+}
+
+.popup-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 10px 8px 14px;
+  background: var(--bg-card-head);
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+}
+
+.popup-head .name {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.popup-head .id {
+  font-family: 'IBM Plex Mono', 'Roboto Mono', ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popup-head .remove {
+  flex: none;
+  margin-left: auto;
+  align-self: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.popup .plugin-ui {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .port {

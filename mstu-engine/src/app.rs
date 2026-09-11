@@ -17,6 +17,7 @@ use crate::{
         owned::{Owned, own_message},
         pipeline::{NodeId, Pipeline, PipelineId},
         process::{self, ProcessData},
+        schema,
     },
     utils::generate_plugin_id,
 };
@@ -198,6 +199,13 @@ impl App {
 
     pub fn set_parameter(&self, plugin_id: &str, field: usize, value: Value) -> Result<()> {
         let plugin = self.plugin(plugin_id)?;
+
+        // A client's number carries no type, so give the field the one it asks
+        // for rather than whatever JSON happened to parse.
+        let value = match schema::field_kind((plugin.descriptor.settings_schema)(), field) {
+            Some(kind) => schema::coerce(value, kind),
+            None => value,
+        };
 
         log_info!("set parameter {field} of '{plugin_id}' to {value}");
 

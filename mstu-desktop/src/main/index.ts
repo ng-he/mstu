@@ -1,5 +1,6 @@
-import { readFile } from 'fs/promises'
-import { extname, join, resolve, sep } from 'path'
+import { createReadStream } from 'fs'
+import { readFile, stat } from 'fs/promises'
+import { extname, isAbsolute, join, resolve, sep } from 'path'
 import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron'
 
 import { Engine, socketPath } from './engine'
@@ -40,9 +41,77 @@ const CONTENT_TYPES: Record<string, string> = {
 const SDK_PREFIX = '/_sdk/'
 const SDK_FOLDER = join(__dirname, '../../resources/sdk')
 
+/// A plugin UI cannot load file:// from its own scheme, so media it knows the
+/// path of comes back through mstu-plugin://<id>/_media/?path=...
+const MEDIA_PREFIX = '/_media/'
+
+const MEDIA_TYPES: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm'
+}
+
+async function serveMedia(url: URL, request: Request): Promise<Response> {
+  const path = url.searchParams.get('path')
+
+  if (!path || !isAbsolute(path)) {
+    return new Response('bad path', { status: 400 })
+  }
+
+  const info = await stat(path).catch(() => null)
+
+  if (!info?.isFile()) {
+    return new Response('not found', { status: 404 })
+  }
+
+  const type = MEDIA_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
+  const stream = (from: number, to: number): ReadableStream =>
+    createReadStream(path, { start: from, end: to }) as unknown as ReadableStream
+
+  // Seeking a <video> is range requests: without 206 the element cannot jump
+  // to a position, which is the whole point of following the progress bar.
+  const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('range') ?? '')
+
+  if (!range) {
+    return new Response(stream(0, info.size - 1), {
+      headers: {
+        'content-type': type,
+        'content-length': String(info.size),
+        'accept-ranges': 'bytes'
+      }
+    })
+  }
+
+  const start = range[1] ? Number(range[1]) : 0
+  const end = range[2] ? Math.min(Number(range[2]), info.size - 1) : info.size - 1
+
+  if (start >= info.size || start > end) {
+    return new Response('range not satisfiable', {
+      status: 416,
+      headers: { 'content-range': `bytes */${info.size}` }
+    })
+  }
+
+  return new Response(stream(start, end), {
+    status: 206,
+    headers: {
+      'content-type': type,
+      'content-length': String(end - start + 1),
+      'content-range': `bytes ${start}-${end}/${info.size}`,
+      'accept-ranges': 'bytes'
+    }
+  })
+}
+
 /// mstu-plugin://<plugin-id>/index.html -> <ui folder>/index.html
 function servePluginUi(request: Request): Promise<Response> | Response {
   const url = new URL(request.url)
+
+  if (url.pathname.startsWith(MEDIA_PREFIX)) {
+    return serveMedia(url, request)
+  }
+
   const sdk = url.pathname.startsWith(SDK_PREFIX)
   const folder = sdk ? SDK_FOLDER : uiFolders.get(url.hostname)
 

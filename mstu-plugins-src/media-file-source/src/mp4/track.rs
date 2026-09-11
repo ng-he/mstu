@@ -413,6 +413,47 @@ impl Track {
         Ok(chunk_offset + sample_offset as u64)
     }
 
+    /// Track duration in timescale units.
+    pub fn media_duration(&self) -> u64 {
+        self.trak.mdia.mdhd.duration
+    }
+
+    /// Sample covering `time`, in timescale units.
+    pub fn sample_at_time(&self, time: u64) -> u32 {
+        let stts = &self.trak.mdia.minf.stbl.stts;
+
+        let mut sample_id: u32 = 1;
+        let mut elapsed: u64 = 0;
+
+        for entry in stts.entries.iter() {
+            let span = entry.sample_count as u64 * entry.sample_delta as u64;
+
+            if time < elapsed + span {
+                let delta = (entry.sample_delta as u64).max(1);
+                return sample_id + ((time - elapsed) / delta) as u32;
+            }
+
+            sample_id += entry.sample_count;
+            elapsed += span;
+        }
+
+        sample_id
+    }
+
+    /// Nearest sync sample at or before `sample_id`, so a seek lands on a
+    /// keyframe rather than mid-GOP.
+    pub fn sync_sample_at_or_before(&self, sample_id: u32) -> u32 {
+        let Some(ref stss) = self.trak.mdia.minf.stbl.stss else {
+            return sample_id;
+        };
+
+        match stss.entries.binary_search(&sample_id) {
+            Ok(_) => sample_id,
+            Err(0) => 1,
+            Err(index) => stss.entries[index - 1],
+        }
+    }
+
     fn sample_time(&self, sample_id: u32) -> Result<(u64, u32)> {
         let stts = &self.trak.mdia.minf.stbl.stts;
 

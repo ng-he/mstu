@@ -1,0 +1,11 @@
+<html><body style="margin:0;padding:6px;background:#262626;color:#e6e6e6;font:12px sans-serif">
+<div>Source file · 0:42 / 3:10</div>
+<div id="bar" style="margin-top:8px;height:6px;width:120px;background:#ff6c37"></div>
+<script>
+const z = Number(new URLSearchParams(location.search).get('zoom') || 1)
+document.documentElement.style.zoom = z
+addEventListener('pointerdown', (e) => {
+  const b = document.getElementById('bar').getBoundingClientRect()
+  console.log('[probe] zoom=' + z + ' clientX=' + e.clientX + ' bar.left=' + b.left + ' bar.width=' + b.width + ' ratio=' + ((e.clientX - b.left) / b.width).toFixed(3))
+})
+</script></body></html>

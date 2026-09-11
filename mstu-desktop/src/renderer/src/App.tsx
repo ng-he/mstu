@@ -9,10 +9,11 @@ import Graph, {
   NODE_WIDTH
 } from './components/Graph'
 import Inspector from './components/Inspector'
+import PluginPopup from './components/PluginPopup'
 import Sidebar from './components/Sidebar'
 import Toolbar from './components/Toolbar'
 import { engine } from './engine'
-import type { Connector, Field, Library, Mapping, Node, Subscription } from './types'
+import type { Connector, Field, Library, Mapping, Node, Popup, Subscription } from './types'
 
 let nextId = 1
 const newId = (prefix: string): string => `${prefix}${nextId++}`
@@ -87,17 +88,26 @@ function App(): JSX.Element {
   const [connectors, setConnectors] = useState<Connector[]>([])
   const [connectorId, setConnectorId] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
+  const [popups, setPopups] = useState<Popup[]>([])
 
-  /// Plugin UI frames, and the settings we have pushed to each plugin.
+  /// Plugin UI frames in the nodes and in popups, and the settings we have pushed to each plugin.
   const frames = useRef(new Map<string, HTMLIFrameElement>())
+  const popupFrames = useRef(new Map<string, HTMLIFrameElement>())
   const settings = useRef(new Map<string, Record<number, unknown>>())
   const hadGraph = useRef(false)
 
   const report = (problem: unknown): void =>
     setError(problem instanceof Error ? problem.message : String(problem))
 
+  /// Every page of a plugin's UI sees the same live values, state and events.
   const post = useCallback((plugin: string, message: unknown): void => {
     frames.current.get(plugin)?.contentWindow?.postMessage(message, '*')
+    popupFrames.current.get(plugin)?.contentWindow?.postMessage(message, '*')
+  }, [])
+
+  const closePopup = useCallback((plugin: string): void => {
+    setPopups((current) => current.filter((item) => item.plugin !== plugin))
+    frames.current.get(plugin)?.contentWindow?.postMessage({ type: 'popup', open: false }, '*')
   }, [])
 
   /// Settings plus the schemas the UI SDK needs to address them by name.
@@ -161,7 +171,9 @@ function App(): JSX.Element {
     setConnectors([])
     setConnectorId(null)
     setRunning(false)
+    setPopups([])
     frames.current.clear()
+    popupFrames.current.clear()
     settings.current.clear()
   }, [connected])
 
@@ -185,20 +197,73 @@ function App(): JSX.Element {
   // ---------- plugin UI bridge ----------
 
   useEffect(() => {
+    const find = (
+      map: Map<string, HTMLIFrameElement>,
+      source: MessageEventSource | null
+    ): string | undefined =>
+      [...map.entries()].find(([, frame]) => frame.contentWindow === source)?.[0]
+
+    /// Settings changed in one page reach the plugin's other page too.
+    const syncOthers = (plugin: string, source: MessageEventSource | null): void => {
+      for (const frame of [frames.current.get(plugin), popupFrames.current.get(plugin)]) {
+        if (frame && frame.contentWindow !== source) {
+          frame.contentWindow?.postMessage(initMessage(plugin), '*')
+        }
+      }
+    }
+
     const onMessage = async (message: MessageEvent): Promise<void> => {
-      const entry = [...frames.current.entries()].find(
-        ([, frame]) => frame.contentWindow === message.source
-      )
+      const inNode = find(frames.current, message.source)
+      const inPopup = inNode ? undefined : find(popupFrames.current, message.source)
+      const plugin = inNode ?? inPopup
 
-      if (!entry) return
+      if (!plugin) return
 
-      const [plugin] = entry
       const data = message.data ?? {}
+      const reply = (answer: unknown): void =>
+        (message.source as Window | null)?.postMessage(answer, '*')
 
       try {
-        if (data.type === 'ready') {
-          // A plugin UI may ask for the box it needs, within what the canvas
-          // is willing to give it.
+        // A popup page may ask for its own size, which is the popup's, not the node's.
+        if (inPopup && (data.type === 'ready' || data.type === 'size')) {
+          if (data.width || data.height) {
+            setPopups((current) =>
+              current.map((item) =>
+                item.plugin === plugin
+                  ? { ...item, width: data.width ?? item.width, height: data.height ?? item.height }
+                  : item
+              )
+            )
+          }
+
+          if (data.type === 'ready') reply(initMessage(plugin))
+          return
+        }
+
+        if (data.type === 'popup') {
+          const page = String(data.page ?? '').replace(/^\/+/, '')
+          if (!page) return
+
+          const popup: Popup = {
+            plugin,
+            page,
+            title: String(data.title ?? nodes.find((item) => item.plugin === plugin)?.name ?? ''),
+            width: data.width ?? 480,
+            height: data.height ?? 320
+          }
+
+          setPopups((current) => [...current.filter((item) => item.plugin !== plugin), popup])
+          frames.current.get(plugin)?.contentWindow?.postMessage({ type: 'popup', open: true }, '*')
+          return
+        }
+
+        if (data.type === 'popup_close') {
+          closePopup(plugin)
+          return
+        }
+
+        // A plugin UI may ask for the box it needs, at load or later.
+        if (data.type === 'ready' || data.type === 'size') {
           if (data.width || data.height) {
             setNodes((current) =>
               current.map((node) =>
@@ -213,7 +278,7 @@ function App(): JSX.Element {
             )
           }
 
-          post(plugin, initMessage(plugin))
+          if (data.type === 'ready') reply(initMessage(plugin))
           return
         }
 
@@ -221,6 +286,7 @@ function App(): JSX.Element {
           await engine.setParameter(plugin, data.field, data.value)
           const current = settings.current.get(plugin) ?? {}
           settings.current.set(plugin, { ...current, [data.field]: data.value })
+          syncOthers(plugin, message.source)
           return
         }
 
@@ -245,7 +311,7 @@ function App(): JSX.Element {
 
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [post, initMessage])
+  }, [post, initMessage, closePopup, nodes])
 
   // ---------- graph editing ----------
 
@@ -417,7 +483,10 @@ function App(): JSX.Element {
 
     if (orphaned.some((item) => item.id === connectorId)) setConnectorId(null)
 
+    setPopups((current) => current.filter((item) => item.plugin !== node.plugin))
+
     frames.current.delete(node.plugin)
+    popupFrames.current.delete(node.plugin)
     settings.current.delete(node.plugin)
   }
 
@@ -616,6 +685,18 @@ function App(): JSX.Element {
           />
         </div>
       </div>
+
+      {popups.map((popup) => (
+        <PluginPopup
+          key={popup.plugin}
+          popup={popup}
+          registerFrame={(plugin, frame) => {
+            if (frame) popupFrames.current.set(plugin, frame)
+            else popupFrames.current.delete(plugin)
+          }}
+          onClose={() => closePopup(popup.plugin)}
+        />
+      ))}
     </div>
   )
 }

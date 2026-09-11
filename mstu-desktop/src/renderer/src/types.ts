@@ -59,6 +59,16 @@ export type Node = {
   y: number
 }
 
+/// A page of a plugin's UI floating over the workspace, at most one per plugin.
+export type Popup = {
+  plugin: string
+  page: string
+  title: string
+  /// Size of the page itself, not counting the title bar.
+  width: number
+  height: number
+}
+
 /// One field of the source message copied into one field of the target.
 export type Mapping = {
   id: string

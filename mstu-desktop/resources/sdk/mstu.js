@@ -32,10 +32,12 @@ export function connect(size = {}) {
   const onLive = []
   const onState = []
   const onSettings = []
+  const onPopup = []
   const onEvent = new Map()
 
   let schemas = { settings: null, live: null, events: [], commands: [] }
   let settings = {}
+  let initialized = false
   let started = null
 
   const api = {
@@ -99,8 +101,35 @@ export function connect(size = {}) {
     /// Settings changed elsewhere, such as by the file chooser.
     onSettings(listener) {
       onSettings.push(listener)
+      // Registered after `await connect()`, so replay the settings that resolved it.
+      if (initialized) listener(settings)
       return api
     },
+
+    /// Asks the host for a different box on the canvas, clamped as at load.
+    resize(width, height) {
+      send({ type: 'size', width, height })
+    },
+
+    /// Opens another page of this UI in a window floating over the canvas; it connects like this one.
+    popup(page, { title, width, height } = {}) {
+      send({ type: 'popup', page, title, width, height })
+    },
+
+    /// Closes the page opened with popup().
+    closePopup() {
+      send({ type: 'popup_close' })
+    },
+
+    /// Whether this UI's popup is open, including when the user closes it.
+    onPopup(listener) {
+      onPopup.push(listener)
+      return api
+    },
+
+    /// A local file the host will serve to this UI, since a plugin origin
+    /// cannot load file:// itself.
+    mediaUrl: (path) => `./_media/?path=${encodeURIComponent(path ?? '')}`,
 
     el: (id) => document.getElementById(id)
   }
@@ -116,6 +145,7 @@ export function connect(size = {}) {
       if (data.schemas) schemas = data.schemas
 
       settings = named(fieldsOf(schemas.settings), data.settings)
+      initialized = true
       onSettings.forEach((listener) => listener(settings))
       started(api)
 
@@ -142,6 +172,11 @@ export function connect(size = {}) {
 
     if (data.type === 'state') {
       onState.forEach((listener) => listener(data))
+      return
+    }
+
+    if (data.type === 'popup') {
+      onPopup.forEach((listener) => listener({ open: Boolean(data.open) }))
     }
   })
 
