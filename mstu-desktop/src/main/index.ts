@@ -10,8 +10,12 @@ const uiFolders = new Map<string, string>()
 
 let window: BrowserWindow | null = null
 
+/// The engine keeps pushing while the window is being torn down, and reaching
+/// into a destroyed one throws all the way out of the main process.
 const send = (channel: string, payload: unknown): void => {
-  window?.webContents.send(channel, payload)
+  if (!window || window.isDestroyed()) return
+
+  window.webContents.send(channel, payload)
 }
 
 const engine = new Engine(
@@ -24,7 +28,11 @@ const engine = new Engine(
 )
 
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'mstu-plugin', privileges: { standard: true, secure: true } }
+  // The host page fetches plugin pages and imports their scripts, both CORS requests.
+  {
+    scheme: 'mstu-plugin',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true }
+  }
 ])
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -36,8 +44,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.png': 'image/png'
 }
 
-/// The UI SDK, served under every plugin's own origin so a plugin can import
-/// it without the host having to allow cross-origin module loads.
+/// The UI SDK's helpers and base styles, served under every plugin's own origin.
 const SDK_PREFIX = '/_sdk/'
 const SDK_FOLDER = join(__dirname, '../../resources/sdk')
 
@@ -131,7 +138,10 @@ function servePluginUi(request: Request): Promise<Response> | Response {
     .then(
       (body) =>
         new Response(body, {
-          headers: { 'content-type': CONTENT_TYPES[extname(file)] ?? 'application/octet-stream' }
+          headers: {
+            'content-type': CONTENT_TYPES[extname(file)] ?? 'application/octet-stream',
+            'access-control-allow-origin': '*'
+          }
         })
     )
     .catch(() => new Response('not found', { status: 404 }))
@@ -150,6 +160,9 @@ function createWindow(): void {
   })
 
   window.on('ready-to-show', () => window?.show())
+  window.on('closed', () => {
+    window = null
+  })
 
   const rendererUrl = process.env['ELECTRON_RENDERER_URL']
 

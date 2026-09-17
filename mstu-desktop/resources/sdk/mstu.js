@@ -1,189 +1,24 @@
-/// Bridge between a plugin UI and the mstu host.
+/// Helpers for plugin UIs.
 ///
-/// The wire protocol addresses settings, commands and events by index. This
-/// maps them onto the names in the plugin's own schemas, so a UI never has to
-/// hardcode a position that a schema change would silently break.
-
-const send = (message) => parent.postMessage(message, '*')
-
-const warn = (message) => console.warn(`[mstu] ${message}`)
-
-const fieldsOf = (schema) => schema?.fields ?? []
-
-const indexOf = (list, name) => (list ?? []).findIndex((item) => item.name === name)
-
-/// Positional values to an object keyed by the schema's field names.
+/// A plugin page is an HTML file whose styles and markup the host mounts in a
+/// shadow root on the canvas. Its script is a module the host imports:
 ///
-/// `values` may be an array or the host's index-keyed settings object.
-function named(fields, values) {
-  const result = {}
-
-  fields.forEach((field, index) => {
-    result[field.name] = values?.[index]
-  })
-
-  return result
-}
-
-/// Connects to the host and resolves once the plugin's schemas have arrived.
+///   <link rel="stylesheet" href="./_sdk/mstu.css" />
+///   <div id="state">idle</div>
+///   <script type="module" src="./index.js"></script>
 ///
-/// `size` is the box this UI would like on the canvas; the host clamps it.
-export function connect(size = {}) {
-  const onLive = []
-  const onState = []
-  const onSettings = []
-  const onPopup = []
-  const onEvent = new Map()
-
-  let schemas = { settings: null, live: null, events: [], commands: [] }
-  let settings = {}
-  let initialized = false
-  let started = null
-
-  const api = {
-    /// Current settings, keyed by name.
-    get settings() {
-      return settings
-    },
-
-    /// The plugin's schemas as the engine describes them.
-    get schemas() {
-      return schemas
-    },
-
-    /// Writes one setting through to the plugin.
-    set(name, value) {
-      const field = indexOf(fieldsOf(schemas.settings), name)
-
-      if (field < 0) return warn(`no setting named '${name}'`)
-
-      send({ type: 'set_parameter', field, value })
-      settings = { ...settings, [name]: value }
-    },
-
-    /// Opens the host's file or folder chooser and stores what comes back.
-    pick(name, { kind = 'file' } = {}) {
-      const field = indexOf(fieldsOf(schemas.settings), name)
-
-      if (field < 0) return warn(`no setting named '${name}'`)
-
-      send({ type: 'pick', kind, field })
-    },
-
-    /// Invokes one of the plugin's commands by name.
-    invoke(name, payload = []) {
-      const command = indexOf(schemas.commands, name)
-
-      if (command < 0) return warn(`no command named '${name}'`)
-
-      send({ type: 'invoke', command, payload })
-    },
-
-    /// The plugin's live values, pushed by the engine on a timer.
-    onLive(listener) {
-      onLive.push(listener)
-      return api
-    },
-
-    /// One of the plugin's events, by name.
-    onEvent(name, listener) {
-      if (!onEvent.has(name)) onEvent.set(name, [])
-      onEvent.get(name).push(listener)
-      return api
-    },
-
-    /// Whether the pipeline is running.
-    onState(listener) {
-      onState.push(listener)
-      return api
-    },
-
-    /// Settings changed elsewhere, such as by the file chooser.
-    onSettings(listener) {
-      onSettings.push(listener)
-      // Registered after `await connect()`, so replay the settings that resolved it.
-      if (initialized) listener(settings)
-      return api
-    },
-
-    /// Asks the host for a different box on the canvas, clamped as at load.
-    resize(width, height) {
-      send({ type: 'size', width, height })
-    },
-
-    /// Opens another page of this UI in a window floating over the canvas; it connects like this one.
-    popup(page, { title, width, height } = {}) {
-      send({ type: 'popup', page, title, width, height })
-    },
-
-    /// Closes the page opened with popup().
-    closePopup() {
-      send({ type: 'popup_close' })
-    },
-
-    /// Whether this UI's popup is open, including when the user closes it.
-    onPopup(listener) {
-      onPopup.push(listener)
-      return api
-    },
-
-    /// A local file the host will serve to this UI, since a plugin origin
-    /// cannot load file:// itself.
-    mediaUrl: (path) => `./_media/?path=${encodeURIComponent(path ?? '')}`,
-
-    el: (id) => document.getElementById(id)
-  }
-
-  const ready = new Promise((resolve) => {
-    started = resolve
-  })
-
-  window.addEventListener('message', ({ data }) => {
-    if (!data || typeof data !== 'object') return
-
-    if (data.type === 'init') {
-      if (data.schemas) schemas = data.schemas
-
-      settings = named(fieldsOf(schemas.settings), data.settings)
-      initialized = true
-      onSettings.forEach((listener) => listener(settings))
-      started(api)
-
-      return
-    }
-
-    if (data.type === 'live') {
-      const values = named(fieldsOf(schemas.live), data.payload)
-      onLive.forEach((listener) => listener(values))
-
-      return
-    }
-
-    if (data.type === 'event') {
-      const descriptor = schemas.events?.[data.event]
-
-      if (!descriptor) return
-
-      const values = named(fieldsOf(descriptor.schema), data.payload)
-      ;(onEvent.get(descriptor.name) ?? []).forEach((listener) => listener(values))
-
-      return
-    }
-
-    if (data.type === 'state') {
-      onState.forEach((listener) => listener(data))
-      return
-    }
-
-    if (data.type === 'popup') {
-      onPopup.forEach((listener) => listener({ open: Boolean(data.open) }))
-    }
-  })
-
-  send({ type: 'ready', ...size })
-
-  return ready
-}
+///   // index.js
+///   export default function mount(plugin) {
+///     plugin.onState(({ running }) => (plugin.el('state').textContent = running ? 'on' : 'idle'))
+///     return () => {} // optional cleanup when the page goes away
+///   }
+///
+/// `plugin` addresses settings, commands and events by the names in the
+/// plugin's schemas: settings, schemas, set, pick, invoke, onLive, onEvent,
+/// onState, onSettings, onPopup, resize, popup, closePopup, mediaUrl, el, root.
+/// onState, onSettings and onPopup are also called right away with the current value.
+///
+/// Keep state inside mount(): it runs again each time the page is shown.
 
 /// Bytes as a short human string, for the size readouts plugins tend to show.
 export function humanSize(bytes) {

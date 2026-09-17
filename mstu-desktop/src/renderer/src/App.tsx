@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import Graph, {
   MAX_NODE_HEIGHT,
@@ -13,6 +13,7 @@ import PluginPopup from './components/PluginPopup'
 import Sidebar from './components/Sidebar'
 import Toolbar from './components/Toolbar'
 import { engine } from './engine'
+import { PluginHost, type HostHooks } from './pluginHost'
 import type { Connector, Field, Library, Mapping, Node, Popup, Subscription } from './types'
 
 let nextId = 1
@@ -90,45 +91,70 @@ function App(): JSX.Element {
   const [running, setRunning] = useState(false)
   const [popups, setPopups] = useState<Popup[]>([])
 
-  /// Plugin UI frames in the nodes and in popups, and the settings we have pushed to each plugin.
-  const frames = useRef(new Map<string, HTMLIFrameElement>())
-  const popupFrames = useRef(new Map<string, HTMLIFrameElement>())
-  const settings = useRef(new Map<string, Record<number, unknown>>())
   const hadGraph = useRef(false)
 
   const report = (problem: unknown): void =>
     setError(problem instanceof Error ? problem.message : String(problem))
 
-  /// Every page of a plugin's UI sees the same live values, state and events.
-  const post = useCallback((plugin: string, message: unknown): void => {
-    frames.current.get(plugin)?.contentWindow?.postMessage(message, '*')
-    popupFrames.current.get(plugin)?.contentWindow?.postMessage(message, '*')
-  }, [])
+  /// Runs every plugin page and hands it the engine's traffic; the hooks below keep it current.
+  const [host] = useState(() => new PluginHost({} as HostHooks))
 
-  const closePopup = useCallback((plugin: string): void => {
+  const closePopup = (plugin: string): void => {
     setPopups((current) => current.filter((item) => item.plugin !== plugin))
-    frames.current.get(plugin)?.contentWindow?.postMessage({ type: 'popup', open: false }, '*')
-  }, [])
+    host.setPopup(plugin, false)
+  }
 
-  /// Settings plus the schemas the UI SDK needs to address them by name.
-  const initMessage = useCallback(
-    (plugin: string) => {
-      const node = nodes.find((item) => item.plugin === plugin)
-      const library = libraries.find((item) => item.key === node?.library)
+  useLayoutEffect(() => {
+    host.hooks = {
+      library: (plugin) =>
+        libraryOf(nodes.find((item) => item.plugin === plugin)) ?? undefined,
 
-      return {
-        type: 'init',
-        settings: settings.current.get(plugin) ?? {},
-        schemas: {
-          settings: library?.settings ?? null,
-          live: library?.live ?? null,
-          events: library?.events ?? [],
-          commands: library?.commands ?? []
+      resize: (plugin, role, width, height) => {
+        if (role === 'popup') {
+          setPopups((current) =>
+            current.map((item) =>
+              item.plugin === plugin
+                ? { ...item, width: width ?? item.width, height: height ?? item.height }
+                : item
+            )
+          )
+
+          return
         }
-      }
-    },
-    [nodes, libraries]
-  )
+
+        setNodes((current) =>
+          current.map((node) =>
+            node.plugin === plugin
+              ? {
+                  ...node,
+                  width: clamp(width ?? node.width, MIN_NODE_WIDTH, MAX_NODE_WIDTH),
+                  height: clamp(height ?? node.height, MIN_NODE_HEIGHT, MAX_NODE_HEIGHT)
+                }
+              : node
+          )
+        )
+      },
+
+      openPopup: (plugin, request) => {
+        const page = request.page.replace(/^\/+/, '')
+        if (!page) return
+
+        const popup: Popup = {
+          plugin,
+          page,
+          title: request.title ?? nodes.find((item) => item.plugin === plugin)?.name ?? '',
+          width: request.width ?? 480,
+          height: request.height ?? 320
+        }
+
+        setPopups((current) => [...current.filter((item) => item.plugin !== plugin), popup])
+        host.setPopup(plugin, true)
+      },
+
+      closePopup,
+      report
+    }
+  })
 
   // ---------- engine connection ----------
 
@@ -137,22 +163,15 @@ function App(): JSX.Element {
     window.mstu.connected().then(setConnected).catch(report)
 
     const offStatus = window.mstu.onStatus(setConnected)
-
-    const offEvent = window.mstu.onEvent((notice) => {
-      post(notice.plugin, { type: 'event', event: notice.event, payload: notice.values })
-    })
-
-    /// Each plugin's own live values, straight through to its UI.
-    const offLive = window.mstu.onLive((live) => {
-      post(live.plugin, { type: 'live', payload: live.values })
-    })
+    const offEvent = window.mstu.onEvent((notice) => host.event(notice.plugin, notice.event, notice.values))
+    const offLive = window.mstu.onLive((live) => host.live(live.plugin, live.values))
 
     return () => {
       offStatus()
       offEvent()
       offLive()
     }
-  }, [post])
+  }, [host])
 
   /// The engine holds every pipeline in memory, so a restart invalidates
   /// every node and plugin id the canvas is holding. Start over rather than
@@ -172,10 +191,8 @@ function App(): JSX.Element {
     setConnectorId(null)
     setRunning(false)
     setPopups([])
-    frames.current.clear()
-    popupFrames.current.clear()
-    settings.current.clear()
-  }, [connected])
+    host.clear()
+  }, [connected, host])
 
   useEffect(() => {
     if (nodes.length > 0) hadGraph.current = true
@@ -193,125 +210,6 @@ function App(): JSX.Element {
       .then((created) => setPipeline(created.pipeline))
       .catch(report)
   }, [connected, pipeline])
-
-  // ---------- plugin UI bridge ----------
-
-  useEffect(() => {
-    const find = (
-      map: Map<string, HTMLIFrameElement>,
-      source: MessageEventSource | null
-    ): string | undefined =>
-      [...map.entries()].find(([, frame]) => frame.contentWindow === source)?.[0]
-
-    /// Settings changed in one page reach the plugin's other page too.
-    const syncOthers = (plugin: string, source: MessageEventSource | null): void => {
-      for (const frame of [frames.current.get(plugin), popupFrames.current.get(plugin)]) {
-        if (frame && frame.contentWindow !== source) {
-          frame.contentWindow?.postMessage(initMessage(plugin), '*')
-        }
-      }
-    }
-
-    const onMessage = async (message: MessageEvent): Promise<void> => {
-      const inNode = find(frames.current, message.source)
-      const inPopup = inNode ? undefined : find(popupFrames.current, message.source)
-      const plugin = inNode ?? inPopup
-
-      if (!plugin) return
-
-      const data = message.data ?? {}
-      const reply = (answer: unknown): void =>
-        (message.source as Window | null)?.postMessage(answer, '*')
-
-      try {
-        // A popup page may ask for its own size, which is the popup's, not the node's.
-        if (inPopup && (data.type === 'ready' || data.type === 'size')) {
-          if (data.width || data.height) {
-            setPopups((current) =>
-              current.map((item) =>
-                item.plugin === plugin
-                  ? { ...item, width: data.width ?? item.width, height: data.height ?? item.height }
-                  : item
-              )
-            )
-          }
-
-          if (data.type === 'ready') reply(initMessage(plugin))
-          return
-        }
-
-        if (data.type === 'popup') {
-          const page = String(data.page ?? '').replace(/^\/+/, '')
-          if (!page) return
-
-          const popup: Popup = {
-            plugin,
-            page,
-            title: String(data.title ?? nodes.find((item) => item.plugin === plugin)?.name ?? ''),
-            width: data.width ?? 480,
-            height: data.height ?? 320
-          }
-
-          setPopups((current) => [...current.filter((item) => item.plugin !== plugin), popup])
-          frames.current.get(plugin)?.contentWindow?.postMessage({ type: 'popup', open: true }, '*')
-          return
-        }
-
-        if (data.type === 'popup_close') {
-          closePopup(plugin)
-          return
-        }
-
-        // A plugin UI may ask for the box it needs, at load or later.
-        if (data.type === 'ready' || data.type === 'size') {
-          if (data.width || data.height) {
-            setNodes((current) =>
-              current.map((node) =>
-                node.plugin === plugin
-                  ? {
-                      ...node,
-                      width: clamp(data.width ?? node.width, MIN_NODE_WIDTH, MAX_NODE_WIDTH),
-                      height: clamp(data.height ?? node.height, MIN_NODE_HEIGHT, MAX_NODE_HEIGHT)
-                    }
-                  : node
-              )
-            )
-          }
-
-          if (data.type === 'ready') reply(initMessage(plugin))
-          return
-        }
-
-        if (data.type === 'set_parameter') {
-          await engine.setParameter(plugin, data.field, data.value)
-          const current = settings.current.get(plugin) ?? {}
-          settings.current.set(plugin, { ...current, [data.field]: data.value })
-          syncOthers(plugin, message.source)
-          return
-        }
-
-        if (data.type === 'invoke') {
-          await engine.invoke(plugin, data.command, data.payload ?? [])
-          return
-        }
-
-        if (data.type === 'pick') {
-          const picked = await window.mstu.pick(data.kind === 'directory' ? 'directory' : 'file')
-          if (!picked) return
-
-          await engine.setParameter(plugin, data.field, picked)
-          const current = settings.current.get(plugin) ?? {}
-          settings.current.set(plugin, { ...current, [data.field]: picked })
-          post(plugin, initMessage(plugin))
-        }
-      } catch (problem) {
-        report(problem)
-      }
-    }
-
-    window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
-  }, [post, initMessage, closePopup, nodes])
 
   // ---------- graph editing ----------
 
@@ -455,9 +353,7 @@ function App(): JSX.Element {
         }))
       )
 
-      for (const node of nodes) {
-        post(node.plugin, { type: 'state', running: !running })
-      }
+      host.setRunning(!running)
     } catch (problem) {
       report(problem)
     }
@@ -484,10 +380,7 @@ function App(): JSX.Element {
     if (orphaned.some((item) => item.id === connectorId)) setConnectorId(null)
 
     setPopups((current) => current.filter((item) => item.plugin !== node.plugin))
-
-    frames.current.delete(node.plugin)
-    popupFrames.current.delete(node.plugin)
-    settings.current.delete(node.plugin)
+    host.forget(node.plugin)
   }
 
   /// A node only has a worker to switch once the pipeline has started.
@@ -547,11 +440,7 @@ function App(): JSX.Element {
                 current.map((node) => (node.id === id ? { ...node, x, y } : node))
               )
             }
-            registerFrame={(plugin, frame) => {
-              if (frame) frames.current.set(plugin, frame)
-              else frames.current.delete(plugin)
-            }}
-            onFrameReady={(plugin) => post(plugin, initMessage(plugin))}
+            host={host}
           />
 
           <Inspector
@@ -689,11 +578,8 @@ function App(): JSX.Element {
       {popups.map((popup) => (
         <PluginPopup
           key={popup.plugin}
+          host={host}
           popup={popup}
-          registerFrame={(plugin, frame) => {
-            if (frame) popupFrames.current.set(plugin, frame)
-            else popupFrames.current.delete(plugin)
-          }}
           onClose={() => closePopup(popup.plugin)}
         />
       ))}

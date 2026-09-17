@@ -531,13 +531,11 @@ input:focus {
   border-radius: 0 0 var(--radius) var(--radius);
 }
 
+/* Shadow host of a plugin page: layout only, since rules here beat the page's own :host. */
 .plugin-ui {
   flex: 1;
-  /* An iframe is inline by default, which leaves a descender gap below it. */
-  display: block;
-  width: 100%;
-  border: 0;
-  background: var(--bg-card);
+  min-height: 0;
+  overflow: auto;
 }
 
 .node-ui-slot {
@@ -563,7 +561,7 @@ input:focus {
   min-height: 140px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
-  /* The browser's corner grip; the page iframe grows with it. */
+  /* The browser's corner grip; the plugin page grows with it. */
   resize: both;
   overflow: hidden;
   background: var(--bg-card);

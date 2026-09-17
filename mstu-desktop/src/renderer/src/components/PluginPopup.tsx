@@ -1,15 +1,17 @@
 import { useRef, useState } from 'react'
 
+import type { PluginHost } from '../pluginHost'
 import type { Popup } from '../types'
+import PluginView from './PluginView'
 
 type Props = {
+  host: PluginHost
   popup: Popup
-  registerFrame: (plugin: string, frame: HTMLIFrameElement | null) => void
   onClose: () => void
 }
 
 /// A plugin page over the workspace, not modal, so the canvas stays usable.
-function PluginPopup({ popup, registerFrame, onClose }: Props): JSX.Element {
+function PluginPopup({ host, popup, onClose }: Props): JSX.Element {
   const [at, setAt] = useState(() => ({
     x: Math.max(16, (window.innerWidth - popup.width) / 2),
     y: 80
@@ -52,12 +54,13 @@ function PluginPopup({ popup, registerFrame, onClose }: Props): JSX.Element {
         </button>
       </div>
 
-      <iframe
+      <PluginView
+        host={host}
+        plugin={popup.plugin}
+        page={popup.page}
+        role="popup"
         className="plugin-ui"
-        title={popup.title}
-        src={`mstu-plugin://${popup.plugin.toLowerCase()}/${popup.page}`}
         style={{ height: popup.height }}
-        ref={(frame) => registerFrame(popup.plugin, frame)}
       />
     </div>
   )

@@ -1,7 +1,8 @@
 /* Theme and building blocks for plugin UIs.
-   Kept in step with the host so a plugin looks native without copying it. */
+   Kept in step with the host so a plugin looks native without copying it.
+   Pages live in a shadow root, so :host stands in for both :root and body. */
 
-:root {
+:host {
   --bg: #262626;
   --bg-input: #1a1a1a;
   --border: #3d3d3d;
@@ -18,8 +19,8 @@
   box-sizing: border-box;
 }
 
-body {
-  margin: 0;
+:host {
+  display: block;
   padding: 10px;
   background: var(--bg);
   color: var(--text);

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
+import type { PluginHost } from '../pluginHost'
 import type { Connector, Library, Node } from '../types'
+import PluginView from './PluginView'
 
 /// Used until a plugin UI declares a size of its own.
 export const NODE_WIDTH = 280
@@ -39,8 +41,7 @@ type Props = {
   onRemoveNode: (id: number) => void
   onMoveNode: (id: number, x: number, y: number) => void
   onLink: (from: number, to: number) => void
-  registerFrame: (plugin: string, frame: HTMLIFrameElement | null) => void
-  onFrameReady: (plugin: string) => void
+  host: PluginHost
 }
 
 type Point = { x: number; y: number }
@@ -344,12 +345,12 @@ function Graph(props: Props): JSX.Element {
 
               <div className="node-body">
                 {item.ui ? (
-                  <iframe
+                  <PluginView
+                    host={props.host}
+                    plugin={item.plugin}
+                    page="index.html"
+                    role="node"
                     className="plugin-ui"
-                    title={item.name}
-                    src={`mstu-plugin://${item.plugin.toLowerCase()}/index.html`}
-                    ref={(frame) => props.registerFrame(item.plugin, frame)}
-                    onLoad={() => props.onFrameReady(item.plugin)}
                   />
                 ) : (
                   <div className="node-ui-slot">no plugin UI</div>
