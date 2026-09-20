@@ -25,7 +25,9 @@ function Picker({ kind, value, items, onPick }: Props): JSX.Element {
     if (!open) return
 
     const outside = (event: PointerEvent): void => {
-      if (!box.current?.contains(event.target as Node)) setOpen(false)
+      const at = event.target
+
+      if (!(at instanceof Node) || !box.current?.contains(at)) setOpen(false)
     }
 
     const key = (event: KeyboardEvent): void => {

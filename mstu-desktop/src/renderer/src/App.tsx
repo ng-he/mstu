@@ -103,6 +103,10 @@ function App(): JSX.Element {
   const [nodes, setNodes] = useState<Node[]>([])
   const [connectors, setConnectors] = useState<Connector[]>([])
   const [connectorId, setConnectorId] = useState<string | null>(null)
+
+  /// A link marked on the canvas, which is not the same as one opened for
+  /// wiring: marking it leaves the graph in view so Delete can take it away.
+  const [markedId, setMarkedId] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [popups, setPopups] = useState<Popup[]>([])
 
@@ -339,6 +343,41 @@ function App(): JSX.Element {
     if (next) commitMappings(next)
   }
 
+  /// Unwiring a field asks the engine to drop that one mapping, so the rest of
+  /// the link keeps running as it is.
+  function removeMapping(to: number[]): void {
+    const next = updateConnector((current) => ({
+      ...current,
+      mappings: fill(current.mappings, to, null)
+    }))
+
+    if (next && pipeline !== null) {
+      engine.removeMapping(pipeline, next.from, next.to, to).catch(report)
+    }
+  }
+
+  function removeSubscriptionMapping(subscriptionId: string, to: number[]): void {
+    const subscription = connector?.subscriptions.find((item) => item.id === subscriptionId)
+    if (!subscription || !source || !target) return
+
+    updateConnector((current) => ({
+      ...current,
+      subscriptions: current.subscriptions.map((item) =>
+        item.id === subscriptionId ? { ...item, mappings: fill(item.mappings, to, null) } : item
+      )
+    }))
+
+    engine
+      .removeSubscriptionMapping(
+        source.plugin,
+        subscription.event,
+        target.plugin,
+        subscription.command,
+        to
+      )
+      .catch(report)
+  }
+
   const editSubscription = (
     subscriptionId: string,
     change: (current: Subscription) => Subscription
@@ -468,6 +507,45 @@ function App(): JSX.Element {
     }
   }
 
+  // Delete takes the marked link away. The wiring editor has its own Delete,
+  // for a mapping, so the canvas keeps out of the way while it is open.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return
+      if (connectorId !== null || markedId === null) return
+
+      removeConnector(markedId)
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  /// Removing a link takes its subscriptions with it: the engine keeps those
+  /// outside the link, so they would go on firing on their own.
+  function removeConnector(id: string): void {
+    const doomed = connectors.find((item) => item.id === id)
+    if (!doomed || pipeline === null) return
+
+    const from = nodeOf(doomed.from)
+    const to = nodeOf(doomed.to)
+
+    if (from && to) {
+      for (const subscription of doomed.subscriptions) {
+        engine
+          .unsubscribe(from.plugin, subscription.event, to.plugin, subscription.command)
+          .catch(report)
+      }
+    }
+
+    engine.disconnect(pipeline, doomed.from, doomed.to).catch(report)
+
+    setConnectors((current) => current.filter((item) => item.id !== id))
+
+    if (connectorId === id) setConnectorId(null)
+    if (markedId === id) setMarkedId(null)
+  }
+
   /// Removing a node releases its plugin, so every link and subscription that
   /// referenced it goes with it.
   async function removeNode(id: number): Promise<void> {
@@ -487,6 +565,7 @@ function App(): JSX.Element {
     setConnectors((current) => current.filter((item) => item.from !== id && item.to !== id))
 
     if (orphaned.some((item) => item.id === connectorId)) setConnectorId(null)
+    if (orphaned.some((item) => item.id === markedId)) setMarkedId(null)
 
     setPopups((current) => current.filter((item) => item.plugin !== node.plugin))
     host.forget(node.plugin)
@@ -539,8 +618,11 @@ function App(): JSX.Element {
             connectors={connectors}
             libraries={libraries}
             selectedConnector={connectorId}
+            markedConnector={markedId}
             started={running}
             onSelectConnector={setConnectorId}
+            onMarkConnector={setMarkedId}
+            onRemoveConnector={removeConnector}
             onToggleNode={toggleNode}
             onRemoveNode={removeNode}
             onLink={createLink}
@@ -567,13 +649,20 @@ function App(): JSX.Element {
           source={libraryOf(source) as Library}
           target={libraryOf(target) as Library}
           onSetMapping={(to, from) =>
-            editMappings((current) => ({ ...current, mappings: fill(current.mappings, to, from) }))
+            from === null
+              ? removeMapping(to)
+              : editMappings((current) => ({
+                  ...current,
+                  mappings: fill(current.mappings, to, from)
+                }))
           }
           onSetSubscriptionMapping={(subscriptionId, to, from) =>
-            editSubscription(subscriptionId, (current) => ({
-              ...current,
-              mappings: fill(current.mappings, to, from)
-            }))
+            from === null
+              ? removeSubscriptionMapping(subscriptionId, to)
+              : editSubscription(subscriptionId, (current) => ({
+                  ...current,
+                  mappings: fill(current.mappings, to, from)
+                }))
           }
           onAutoMap={(subscriptionId) => {
             const subscription = connector.subscriptions.find((item) => item.id === subscriptionId)
@@ -598,6 +687,7 @@ function App(): JSX.Element {
               )
             }))
           }}
+          onRemoveConnector={() => removeConnector(connector.id)}
           onAddSubscription={addSubscription}
           onRemoveSubscription={removeSubscription}
           onChangeSubscription={changeSubscription}

@@ -36,11 +36,16 @@ type Props = {
   libraries: Library[]
   selectedConnector: string | null
 
+  /// The link Delete would take away, marked by a right-click.
+  markedConnector: string | null
+
   /// Whether the pipeline has started: a node has no worker to switch before
   /// that, so the power switches stay disabled.
   started: boolean
 
   onSelectConnector: (id: string | null) => void
+  onMarkConnector: (id: string | null) => void
+  onRemoveConnector: (id: string) => void
   onToggleNode: (id: number, running: boolean) => void
   onRemoveNode: (id: number) => void
   onMoveNode: (id: number, x: number, y: number) => void
@@ -84,7 +89,7 @@ function curve(from: Point, to: Point): string {
 }
 
 function Graph(props: Props): JSX.Element {
-  const { nodes, connectors, libraries, selectedConnector } = props
+  const { nodes, connectors, libraries, selectedConnector, markedConnector } = props
 
   const surface = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState<number | null>(null)
@@ -94,6 +99,10 @@ function Graph(props: Props): JSX.Element {
   const [link, setLink] = useState<Link | null>(null)
   const [view, setView] = useState<View>({ x: 0, y: 0, zoom: 1 })
   const [panning, setPanning] = useState(false)
+
+  /// The right-click menu, on the link it was opened over.
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const menuBox = useRef<HTMLDivElement>(null)
   const grab = useRef({ x: 0, y: 0 })
   const panFrom = useRef({ x: 0, y: 0 })
 
@@ -126,6 +135,28 @@ function Graph(props: Props): JSX.Element {
 
     return () => element.removeEventListener('wheel', onWheel)
   }, [])
+
+  useEffect(() => {
+    if (!menu) return
+
+    const away = (event: PointerEvent): void => {
+      const at = event.target
+
+      if (!(at instanceof Element) || !menuBox.current?.contains(at)) setMenu(null)
+    }
+
+    const shut = (): void => setMenu(null)
+
+    window.addEventListener('pointerdown', away)
+    window.addEventListener('resize', shut)
+    window.addEventListener('keydown', shut)
+
+    return () => {
+      window.removeEventListener('pointerdown', away)
+      window.removeEventListener('resize', shut)
+      window.removeEventListener('keydown', shut)
+    }
+  }, [menu])
 
   /// Steps the zoom about the middle of the canvas, for the buttons.
   function zoomBy(factor: number): void {
@@ -194,8 +225,11 @@ function Graph(props: Props): JSX.Element {
 
     if (event.button !== 1 && !(event.button === 0 && background)) return
 
-    // Clicking the empty canvas drops the selection, and the inspector with it.
-    if (background) props.onSelectConnector(null)
+    // Clicking the empty canvas drops the selection, and the wiring with it.
+    if (background) {
+      props.onSelectConnector(null)
+      props.onMarkConnector(null)
+    }
 
     // Otherwise the drag starts selecting text across the canvas.
     event.preventDefault()
@@ -331,7 +365,18 @@ function Graph(props: Props): JSX.Element {
             const flowing = props.activity.includes(source.plugin) ? 'flowing' : ''
 
             return (
-              <g key={connector.id}>
+              <g
+                key={connector.id}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  props.onMarkConnector(connector.id)
+                  setMenu({
+                    id: connector.id,
+                    x: Math.min(event.clientX, window.innerWidth - 200),
+                    y: Math.min(event.clientY, window.innerHeight - 80)
+                  })
+                }}
+              >
                 <path
                   className="edge-hit"
                   d={path}
@@ -340,7 +385,7 @@ function Graph(props: Props): JSX.Element {
                 <path
                   className={`edge ${role(library(source.library))} ${flowing} ${
                     connector.id === selectedConnector ? 'selected' : ''
-                  }`}
+                  } ${connector.id === markedConnector ? 'marked' : ''}`}
                   d={path}
                   onClick={() => props.onSelectConnector(connector.id)}
                 />
@@ -448,6 +493,21 @@ function Graph(props: Props): JSX.Element {
           )
         })}
       </div>
+
+      {menu && (
+        <div className="context-menu" style={{ left: menu.x, top: menu.y }} ref={menuBox}>
+          <button
+            className="menu-item danger"
+            onClick={() => {
+              props.onRemoveConnector(menu.id)
+              setMenu(null)
+            }}
+          >
+            Remove link
+            <span className="key">Del</span>
+          </button>
+        </div>
+      )}
 
       <div className="zoom-controls">
         <button className="icon-button" title="Zoom out" onClick={() => zoomBy(1 / 1.2)}>

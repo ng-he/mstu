@@ -34,6 +34,18 @@ impl Mapper {
         self.mappings.push(mapping);
     }
 
+    /// Drops whatever fills `output`, and says whether anything did.
+    ///
+    /// A field is filled by one mapping, so its path names the mapping.
+    pub fn remove(&mut self, output: &[usize]) -> bool {
+        let before = self.mappings.len();
+
+        self.mappings
+            .retain(|mapping| mapping.output.as_slice() != output);
+
+        self.mappings.len() < before
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &Mapping> {
         self.mappings.iter()
     }

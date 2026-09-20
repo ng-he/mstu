@@ -579,6 +579,13 @@ input:focus {
   stroke-width: 2.5;
 }
 
+/* Marked for Delete: the same weight, dashed, so it reads as "about to go". */
+.edge.marked {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-dasharray: 6 4;
+}
+
 .edges.overlay {
   z-index: 3;
 }
@@ -1608,4 +1615,68 @@ input:focus {
 
 .editor-foot .problem {
   color: var(--amber);
+}
+
+/* The one destructive thing in the editor, kept quiet until it is wanted. */
+.remove-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin-left: auto;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.remove-link:hover {
+  border-color: rgba(240, 68, 56, 0.4);
+  background: rgba(240, 68, 56, 0.1);
+  color: var(--red);
+}
+
+/* What can be done to the mapping under the pointer. */
+.context-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-2);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: left;
+}
+
+.menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.menu-item.danger:hover {
+  background: rgba(240, 68, 56, 0.12);
+  color: var(--red);
+}
+
+.menu-item .key {
+  margin-left: auto;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  color: var(--text-faint);
+  font-size: 10px;
 }

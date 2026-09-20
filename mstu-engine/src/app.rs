@@ -365,6 +365,79 @@ impl App {
         Ok(())
     }
 
+    /// Drops the link between two nodes, mappings and all.
+    ///
+    /// Subscriptions are not part of a link, so they outlive it and are
+    /// dropped on their own.
+    pub fn disconnect(
+        &mut self,
+        pipeline_id: PipelineId,
+        from_node_id: NodeId,
+        to_node_id: NodeId,
+    ) -> Result<bool> {
+        let disconnected = self
+            .pipeline_mut(pipeline_id)?
+            .disconnect(from_node_id, to_node_id);
+
+        if disconnected {
+            log_info!("pipeline {pipeline_id}: disconnected {from_node_id} -> {to_node_id}");
+        } else {
+            log_warn!(
+                "pipeline {pipeline_id}: {from_node_id} -> {to_node_id} was not connected"
+            );
+        }
+
+        Ok(disconnected)
+    }
+
+    /// Drops one mapping from a link, leaving the rest of it alone.
+    pub fn remove_mapping(
+        &mut self,
+        pipeline_id: PipelineId,
+        from_node_id: NodeId,
+        to_node_id: NodeId,
+        output: &[usize],
+    ) -> Result<bool> {
+        let removed = self
+            .pipeline_mut(pipeline_id)?
+            .remove_mapping(from_node_id, to_node_id, output)
+            .ok_or_else(|| format!("node {from_node_id} is not connected to {to_node_id}"))?;
+
+        if removed {
+            log_info!(
+                "pipeline {pipeline_id}: {from_node_id} -> {to_node_id}, unmapped field {output:?}"
+            );
+        }
+
+        Ok(removed)
+    }
+
+    /// Drops one mapping from a subscription's payload, leaving the rest alone.
+    pub fn remove_subscription_mapping(
+        &mut self,
+        from: &str,
+        event: usize,
+        to: &str,
+        command: usize,
+        output: &[usize],
+    ) -> Result<bool> {
+        let handle = self.plugin(to)?.handle;
+
+        let removed = event::manager()
+            .remove_mapping(from, event, handle, command, output)
+            .ok_or_else(|| {
+                format!("'{to}' command {command} is not subscribed to event {event} of '{from}'")
+            })?;
+
+        if removed {
+            log_info!(
+                "'{from}' event {event} -> '{to}' command {command}: unmapped field {output:?}"
+            );
+        }
+
+        Ok(removed)
+    }
+
     pub fn start(&mut self, pipeline_id: PipelineId) -> Result<()> {
         let pipeline = self.pipeline_mut(pipeline_id)?;
 

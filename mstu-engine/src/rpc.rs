@@ -288,6 +288,11 @@ fn as_mapper(params: &Json, name: &str) -> Result<Mapper, String> {
     Ok(mapper)
 }
 
+/// A mapping is named by the field it fills, as an index or a path.
+fn as_output(params: &Json, name: &str) -> Result<Vec<usize>, String> {
+    as_path(Some(&field(params, name)?))
+}
+
 /// One side of a mapping: a field index, or a path into nested records.
 ///
 /// `2` and `[2]` mean the same field; `[2, 4]` is field 4 of the record in field 2.
@@ -363,6 +368,33 @@ async fn dispatch(app: &mut App, method: &str, params: &Json) -> Result<Json, St
 
             Ok(json!({}))
         }
+
+        "disconnect" => Ok(json!({
+            "disconnected": app.disconnect(
+                as_usize(params, "pipeline")?,
+                as_usize(params, "from")?,
+                as_usize(params, "to")?,
+            )?
+        })),
+
+        "remove_mapping" => Ok(json!({
+            "removed": app.remove_mapping(
+                as_usize(params, "pipeline")?,
+                as_usize(params, "from")?,
+                as_usize(params, "to")?,
+                &as_output(params, "mapping")?,
+            )?
+        })),
+
+        "remove_subscription_mapping" => Ok(json!({
+            "removed": app.remove_subscription_mapping(
+                &as_str(params, "from")?,
+                as_usize(params, "event")?,
+                &as_str(params, "to")?,
+                as_usize(params, "command")?,
+                &as_output(params, "mapping")?,
+            )?
+        })),
 
         "subscribe" => {
             app.subscribe(

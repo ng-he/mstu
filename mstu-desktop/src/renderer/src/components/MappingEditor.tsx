@@ -20,6 +20,8 @@ type Props = {
   onSetSubscriptionMapping: (subscriptionId: string, to: number[], from: number[] | null) => void
   onAutoMap: (subscriptionId?: string) => void
 
+  onRemoveConnector: () => void
+
   onAddSubscription: () => string | null
   onRemoveSubscription: (subscriptionId: string) => void
   onChangeSubscription: (subscriptionId: string, patch: Partial<Subscription>) => void
@@ -70,6 +72,10 @@ function MappingEditor(props: Props): JSX.Element {
   } | null>(null)
   const [picked, setPicked] = useState<string | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
+
+  /// The right-click menu, on the mapping it was opened over.
+  const [menu, setMenu] = useState<{ key: string; x: number; y: number } | null>(null)
+  const menuBox = useRef<HTMLDivElement>(null)
 
   /// The subscription the events tab is wiring, defaulting to the first one.
   const subscription =
@@ -157,7 +163,29 @@ function MappingEditor(props: Props): JSX.Element {
   useEffect(() => {
     setPicked(null)
     setProblem(null)
+    setMenu(null)
   }, [tab, subscription?.id])
+
+  // A menu belongs to where it was opened, so anything moving closes it.
+  useEffect(() => {
+    if (!menu) return
+
+    const away = (event: PointerEvent): void => {
+      const at = event.target
+
+      if (!(at instanceof Node) || !menuBox.current?.contains(at)) setMenu(null)
+    }
+
+    const shut = (): void => setMenu(null)
+
+    window.addEventListener('pointerdown', away)
+    window.addEventListener('resize', shut)
+
+    return () => {
+      window.removeEventListener('pointerdown', away)
+      window.removeEventListener('resize', shut)
+    }
+  }, [menu])
 
   // Rows move when either side scrolls or the window changes shape.
   useEffect(() => {
@@ -174,8 +202,11 @@ function MappingEditor(props: Props): JSX.Element {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      // An open dropdown takes the first Escape for itself.
-      if (event.key === 'Escape' && !document.querySelector('.picker-list')) props.onClose()
+      // An open menu or dropdown takes the first Escape for itself.
+      if (event.key === 'Escape') {
+        if (menu) setMenu(null)
+        else if (!document.querySelector('.picker-list')) props.onClose()
+      }
 
       if ((event.key === 'Delete' || event.key === 'Backspace') && picked) {
         onSet(picked.split('.').map(Number), null)
@@ -185,7 +216,7 @@ function MappingEditor(props: Props): JSX.Element {
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [props, onSet, picked])
+  }, [props, onSet, picked, menu])
 
   /// Finishes a drag on whatever row it was released over.
   function drop(event: React.PointerEvent): void {
@@ -221,6 +252,19 @@ function MappingEditor(props: Props): JSX.Element {
     setProblem(null)
     onSet(to, from)
     setPicked(pathKey(to))
+  }
+
+  /// Right-clicking a mapping selects it and opens its menu where the pointer is.
+  function openMenu(event: React.MouseEvent, key: string): void {
+    event.preventDefault()
+    event.stopPropagation()
+
+    setPicked(key)
+    setMenu({
+      key,
+      x: Math.min(event.clientX, window.innerWidth - 200),
+      y: Math.min(event.clientY, window.innerHeight - 80)
+    })
   }
 
   const wired = (side: Side, path: number[]): boolean =>
@@ -261,6 +305,7 @@ function MappingEditor(props: Props): JSX.Element {
           data-path={pathKey(here)}
           title={field.description || field.name}
           onClick={() => side === 'target' && setPicked(pathKey(here))}
+          onContextMenu={(event) => side === 'target' && on && openMenu(event, pathKey(here))}
         >
           <span className="key">&quot;{field.name}&quot;</span>
           <span className="punct">:</span>
@@ -505,7 +550,7 @@ function MappingEditor(props: Props): JSX.Element {
 
           <svg className="wires">
             {wires.map((wire) => (
-              <g key={wire.key}>
+              <g key={wire.key} onContextMenu={(event) => openMenu(event, wire.key)}>
                 <path
                   className="wire-hit"
                   d={curve(wire.from, wire.to)}
@@ -547,8 +592,8 @@ function MappingEditor(props: Props): JSX.Element {
             </span>
           ) : wiring ? (
             <span className="dim">
-              Drag between two fields of the same type to wire them. Click a wire to select it,
-              Delete to remove it.
+              Drag between two fields of the same type to wire them. Right-click a wire for what
+              can be done to it.
             </span>
           ) : (
             <span className="dim">
@@ -556,7 +601,32 @@ function MappingEditor(props: Props): JSX.Element {
               event.
             </span>
           )}
+
+          {/* Down here, well away from Done: it takes the whole link. */}
+          <button
+            className="remove-link"
+            title="Remove the link itself, with its mappings and subscriptions"
+            onClick={props.onRemoveConnector}
+          >
+            ✕ Remove link
+          </button>
         </footer>
+
+        {menu && (
+          <div className="context-menu" style={{ left: menu.x, top: menu.y }} ref={menuBox}>
+            <button
+              className="menu-item danger"
+              onClick={() => {
+                onSet(menu.key.split('.').map(Number), null)
+                setPicked(null)
+                setMenu(null)
+              }}
+            >
+              Remove mapping
+              <span className="key">Del</span>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

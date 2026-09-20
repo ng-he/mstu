@@ -201,6 +201,56 @@ impl Pipeline {
         true
     }
 
+    /// Drops the mapping filling `output` on the link between the two nodes.
+    ///
+    /// None when the pair is not connected, otherwise whether one was there.
+    /// Unmapping is allowed while running, the same way connecting is.
+    pub fn remove_mapping(
+        &mut self,
+        from_node_id: NodeId,
+        to_node_id: NodeId,
+        output: &[usize],
+    ) -> Option<bool> {
+        let connector = self
+            .connectors
+            .get_mut(&from_node_id)?
+            .iter_mut()
+            .find(|connector| connector.to_node_id == to_node_id)?;
+
+        Some(connector.mapper.remove(output))
+    }
+
+    /// Drops the link between two nodes, and says whether one was there.
+    ///
+    /// Disconnecting is allowed while running: the output simply stops being
+    /// routed on, the way connecting takes effect under the traffic.
+    pub fn disconnect(&mut self, from_node_id: NodeId, to_node_id: NodeId) -> bool {
+        let Some(connectors) = self.connectors.get_mut(&from_node_id) else {
+            return false;
+        };
+
+        let before = connectors.len();
+        connectors.retain(|connector| connector.to_node_id != to_node_id);
+
+        if connectors.len() == before {
+            return false;
+        }
+
+        // `start` reads this map to bring targets up first, so a node left with
+        // an empty list must not still look like it feeds another.
+        if connectors.is_empty() {
+            self.connectors.remove(&from_node_id);
+        }
+
+        // Only if it still names this parent: the target may have been
+        // reconnected to something else since.
+        if self.parent_lookup.get(&to_node_id) == Some(&from_node_id) {
+            self.parent_lookup.remove(&to_node_id);
+        }
+
+        true
+    }
+
     /// Spawns every node and switches it on. Targets start before sources, so
     /// no output is routed to a node that has no worker yet.
     pub fn start(&mut self) {

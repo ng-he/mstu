@@ -24,8 +24,31 @@ export const engine = {
   connect: (pipeline: number, from: number, to: number, mappings: Mapping[]) =>
     call('connect', { pipeline, from, to, mappings: pairs(mappings) }),
 
+  /// Drops the link itself. Subscriptions are separate and outlive it.
+  disconnect: (pipeline: number, from: number, to: number) =>
+    call<{ disconnected: boolean }>('disconnect', { pipeline, from, to }),
+
+  /// Drops what fills one field, named by its path, leaving the link alone.
+  removeMapping: (pipeline: number, from: number, to: number, mapping: number[]) =>
+    call<{ removed: boolean }>('remove_mapping', { pipeline, from, to, mapping }),
+
   subscribe: (from: string, event: number, to: string, command: number, mappings: Mapping[]) =>
     call('subscribe', { from, event, to, command, mappings: pairs(mappings) }),
+
+  removeSubscriptionMapping: (
+    from: string,
+    event: number,
+    to: string,
+    command: number,
+    mapping: number[]
+  ) =>
+    call<{ removed: boolean }>('remove_subscription_mapping', {
+      from,
+      event,
+      to,
+      command,
+      mapping
+    }),
 
   unsubscribe: (from: string, event: number, to: string, command: number) =>
     call('unsubscribe', { from, event, to, command }),

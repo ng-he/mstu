@@ -224,6 +224,28 @@ impl Manager {
         removed
     }
 
+    /// Drops the mapping filling `output` from the subscription of `command`.
+    ///
+    /// None when there is no such subscription, otherwise whether one was there.
+    pub fn remove_mapping(
+        &mut self,
+        plugin_id: &str,
+        event: usize,
+        plugin: PluginHandle,
+        command: usize,
+        output: &[usize],
+    ) -> Option<bool> {
+        let subscription = self
+            .channels
+            .get_mut(plugin_id)?
+            .subscriptions
+            .get_mut(event)?
+            .iter_mut()
+            .find(|existing| existing.plugin == plugin && existing.command == command)?;
+
+        Some(subscription.mapper.remove(output))
+    }
+
     /// Closes a plugin's channel and drops every subscription pointing at it.
     ///
     /// A released plugin must not be reachable through an event it never saw
