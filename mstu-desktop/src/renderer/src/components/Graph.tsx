@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type { PluginHost } from '../pluginHost'
+import { role } from '../roles'
 import type { Connector, Library, Node } from '../types'
 import PluginView from './PluginView'
+
+/// Mime type a sidebar row carries while it is being dragged onto the canvas.
+export const LIBRARY_DRAG = 'application/mstu-library'
 
 /// Used until a plugin UI declares a size of its own.
 export const NODE_WIDTH = 280
@@ -36,12 +40,18 @@ type Props = {
   /// that, so the power switches stay disabled.
   started: boolean
 
-  onSelectConnector: (id: string) => void
+  onSelectConnector: (id: string | null) => void
   onToggleNode: (id: number, running: boolean) => void
   onRemoveNode: (id: number) => void
   onMoveNode: (id: number, x: number, y: number) => void
   onLink: (from: number, to: number) => void
   host: PluginHost
+
+  /// Plugins whose live values are moving right now.
+  activity: string[]
+
+  /// A plugin dragged in from the sidebar, dropped at a point on the canvas.
+  onDropLibrary: (key: string, x: number, y: number) => void
 }
 
 type Point = { x: number; y: number }
@@ -78,6 +88,9 @@ function Graph(props: Props): JSX.Element {
 
   const surface = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState<number | null>(null)
+
+  /// The node last touched leads the stack, so an overlapped one can be brought up.
+  const [front, setFront] = useState<number | null>(null)
   const [link, setLink] = useState<Link | null>(null)
   const [view, setView] = useState<View>({ x: 0, y: 0, zoom: 1 })
   const [panning, setPanning] = useState(false)
@@ -133,6 +146,34 @@ function Graph(props: Props): JSX.Element {
     })
   }
 
+  /// Brings the whole graph back into view, wherever the nodes wandered to.
+  function fitView(): void {
+    const box = surface.current?.getBoundingClientRect()
+
+    if (!box || nodes.length === 0) {
+      setView({ x: 0, y: 0, zoom: 1 })
+      return
+    }
+
+    const left = Math.min(...nodes.map((item) => item.x))
+    const top = Math.min(...nodes.map((item) => item.y))
+    const right = Math.max(...nodes.map((item) => item.x + item.width))
+    const bottom = Math.max(...nodes.map((item) => item.y + item.height))
+
+    const margin = 48
+    const zoom = clamp(
+      Math.min(box.width / (right - left + margin * 2), box.height / (bottom - top + margin * 2)),
+      MIN_ZOOM,
+      1
+    )
+
+    setView({
+      zoom,
+      x: (box.width - (right - left) * zoom) / 2 - left * zoom,
+      y: (box.height - (bottom - top) * zoom) / 2 - top * zoom
+    })
+  }
+
   const library = (key: string): Library | undefined => libraries.find((item) => item.key === key)
   const node = (id: number): Node | undefined => nodes.find((item) => item.id === id)
 
@@ -152,6 +193,9 @@ function Graph(props: Props): JSX.Element {
     const background = target === surface.current || target.classList.contains('viewport')
 
     if (event.button !== 1 && !(event.button === 0 && background)) return
+
+    // Clicking the empty canvas drops the selection, and the inspector with it.
+    if (background) props.onSelectConnector(null)
 
     // Otherwise the drag starts selecting text across the canvas.
     event.preventDefault()
@@ -201,11 +245,9 @@ function Graph(props: Props): JSX.Element {
     }
 
     if (dragging !== null) {
-      props.onMoveNode(
-        dragging,
-        Math.max(0, point.x - grab.current.x),
-        Math.max(0, point.y - grab.current.y),
-      )
+      // The canvas has no edge, so neither does the graph: a node may sit at
+      // negative coordinates, above and left of where the view happens to start.
+      props.onMoveNode(dragging, point.x - grab.current.x, point.y - grab.current.y)
     }
   }
 
@@ -247,6 +289,24 @@ function Graph(props: Props): JSX.Element {
       onPointerDown={startPan}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes(LIBRARY_DRAG)) return
+
+        // Without this the browser refuses the drop.
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'copy'
+      }}
+      onDrop={(event) => {
+        const key = event.dataTransfer.getData(LIBRARY_DRAG)
+        const box = surface.current?.getBoundingClientRect()
+        if (!key || !box) return
+
+        event.preventDefault()
+
+        // Dropped under the pointer, near enough that the grab point feels kept.
+        const point = toGraph(view, box, event.clientX - 24, event.clientY - 16)
+        props.onDropLibrary(key, point.x, point.y)
+      }}
       style={{
         // The dots belong to the canvas, so they pan and zoom with it.
         backgroundSize: `${grid}px ${grid}px`,
@@ -267,6 +327,9 @@ function Graph(props: Props): JSX.Element {
 
             const path = curve(outputPort(source), inputPort(target))
 
+            // The link shows flow only while its source is actually producing.
+            const flowing = props.activity.includes(source.plugin) ? 'flowing' : ''
+
             return (
               <g key={connector.id}>
                 <path
@@ -275,7 +338,9 @@ function Graph(props: Props): JSX.Element {
                   onClick={() => props.onSelectConnector(connector.id)}
                 />
                 <path
-                  className={`edge ${connector.id === selectedConnector ? 'selected' : ''}`}
+                  className={`edge ${role(library(source.library))} ${flowing} ${
+                    connector.id === selectedConnector ? 'selected' : ''
+                  }`}
                   d={path}
                   onClick={() => props.onSelectConnector(connector.id)}
                 />
@@ -293,24 +358,33 @@ function Graph(props: Props): JSX.Element {
 
         {nodes.map((item) => {
           const descriptor = library(item.library)
+          const live = props.activity.includes(item.plugin)
 
           return (
             <div
               key={item.id}
               data-node={item.id}
-              className={`node ${props.started && !item.running ? 'off' : ''}`}
+              className={`node ${role(descriptor)} ${props.started && !item.running ? 'off' : ''} ${
+                dragging === item.id ? 'dragging' : ''
+              }`}
+              /* Capture: the plugin page keeps its own pointer events to itself. */
+              onPointerDownCapture={() => setFront(item.id)}
               style={{
                 left: item.x,
                 top: item.y,
                 width: item.width,
                 height: item.height,
+                zIndex: front === item.id ? 3 : 1,
               }}
             >
-              {descriptor?.source && <span className="stripe" />}
+              <span className="stripe" />
 
               <div className="node-head" onPointerDown={(event) => startDrag(event, item)}>
                 <span className="name">{item.name}</span>
-                <span className="id">({item.plugin})</span>
+                <span className="id">{item.plugin}</span>
+
+                {/* Not "the pipeline is on", but "this plugin's readings are moving". */}
+                <span className={`pulse ${live ? 'live' : ''}`} title={live ? 'passing data' : ''} />
 
                 <button
                   className={`power ${item.running ? 'on' : ''}`}
@@ -379,11 +453,7 @@ function Graph(props: Props): JSX.Element {
         <button className="icon-button" title="Zoom out" onClick={() => zoomBy(1 / 1.2)}>
           −
         </button>
-        <button
-          className="level"
-          title="Reset the view"
-          onClick={() => setView({ x: 0, y: 0, zoom: 1 })}
-        >
+        <button className="level" title="Fit the graph in view" onClick={fitView}>
           {Math.round(view.zoom * 100)}%
         </button>
         <button className="icon-button" title="Zoom in" onClick={() => zoomBy(1.2)}>

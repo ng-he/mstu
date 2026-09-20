@@ -15,8 +15,11 @@
 ///
 /// `plugin` addresses settings, commands and events by the names in the
 /// plugin's schemas: settings, schemas, set, pick, invoke, onLive, onEvent,
-/// onState, onSettings, onPopup, resize, popup, closePopup, mediaUrl, el, root.
+/// onState, onSettings, onPopup, fit, resize, popup, closePopup, mediaUrl, el, root.
 /// onState, onSettings and onPopup are also called right away with the current value.
+///
+/// fit(width) asks for the height this page's content needs; resize(width, height) names both.
+/// Styles come from _sdk/mstu.css, whose own classes are prefixed mstu-.
 ///
 /// Keep state inside mount(): it runs again each time the page is shown.
 

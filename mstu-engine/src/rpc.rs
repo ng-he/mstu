@@ -6,7 +6,7 @@ use std::{
 
 use mstu_sdk::{
     CommandDescriptor, EventDescriptor, Message, PluginDescriptor, Schema, Slice, Str, Type,
-    TypeKind, Value,
+    TypeKind, Value, ValueKind,
 };
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
@@ -67,25 +67,91 @@ fn type_name(ty: &Type) -> &'static str {
     }
 }
 
+/// How far a schema is described before it is cut off, in case a record ever
+/// holds itself.
+const MAX_SCHEMA_DEPTH: usize = 8;
+
+/// A scalar as JSON, for the literals enum variants carry.
+fn value_json(value: &Value) -> Json {
+    match value.kind {
+        ValueKind::ValueBool => json!(unsafe { value.data.bool_ }),
+        ValueKind::ValueInt => json!(unsafe { value.data.int_ }),
+        ValueKind::ValueUint => json!(unsafe { value.data.uint_ }),
+        ValueKind::ValueFloat => json!(unsafe { value.data.float_ }),
+        ValueKind::ValueString => json!(unsafe { value.data.string_.as_str() }),
+        _ => Json::Null,
+    }
+}
+
+/// Everything a type says about itself: how wide a number is, what an enum
+/// admits, and the fields of a record, so a client can show the whole shape.
+fn type_json(ty: &Type, depth: usize) -> Json {
+    let mut described = json!({ "type": type_name(ty) });
+
+    match ty.kind {
+        TypeKind::TypeInt => {
+            let int = unsafe { ty.schema.int_ };
+
+            described["bits"] = json!(int.bits);
+            described["signed"] = json!(int.signed);
+        }
+
+        TypeKind::TypeFloat => {
+            described["bits"] = json!(unsafe { ty.schema.float_ }.bits);
+        }
+
+        TypeKind::TypeEnum => {
+            let variants = unsafe { ty.schema.enum_.variants.as_slice() };
+
+            described["variants"] = Json::Array(
+                variants
+                    .iter()
+                    .map(|variant| {
+                        json!({
+                            "name": unsafe { variant.name.as_str() },
+                            "value": value_json(&variant.value),
+                        })
+                    })
+                    .collect(),
+            );
+        }
+
+        TypeKind::TypeRecord if depth < MAX_SCHEMA_DEPTH => {
+            described["fields"] = fields_json(unsafe { ty.schema.record_ }.schema, depth + 1);
+        }
+
+        TypeKind::TypeList if depth < MAX_SCHEMA_DEPTH => {
+            described["element"] = type_json(unsafe { ty.schema.list_ }.element, depth + 1);
+        }
+
+        _ => {}
+    }
+
+    described
+}
+
+fn fields_json(schema: &Schema, depth: usize) -> Json {
+    Json::Array(
+        unsafe { schema.fields.as_slice() }
+            .iter()
+            .map(|field| {
+                let mut described = type_json(field.ty, depth);
+
+                described["name"] = json!(unsafe { field.name.as_str() });
+                described["description"] = json!(unsafe { field.description.as_str() });
+
+                described
+            })
+            .collect(),
+    )
+}
+
 fn schema_json(schema: *const Schema) -> Json {
     if schema.is_null() {
         return Json::Null;
     }
 
-    let fields = unsafe { (*schema).fields.as_slice() };
-
-    let fields: Vec<Json> = fields
-        .iter()
-        .map(|field| {
-            json!({
-                "name": unsafe { field.name.as_str() },
-                "type": type_name(field.ty),
-                "description": unsafe { field.description.as_str() },
-            })
-        })
-        .collect();
-
-    json!({ "fields": fields })
+    json!({ "fields": fields_json(unsafe { &*schema }, 0) })
 }
 
 fn events_json(events: Slice<EventDescriptor>) -> Json {
@@ -212,16 +278,39 @@ fn as_mapper(params: &Json, name: &str) -> Result<Mapper, String> {
 
     for pair in pairs {
         let pair = pair.as_array().ok_or("mapping must be [from, to]")?;
-        let from = pair.first().and_then(Json::as_u64).ok_or("bad mapping")? as usize;
-        let to = pair.get(1).and_then(Json::as_u64).ok_or("bad mapping")? as usize;
 
         mapper.add(Mapping {
-            input: vec![from],
-            output: vec![to],
+            input: as_path(pair.first())?,
+            output: as_path(pair.get(1))?,
         });
     }
 
     Ok(mapper)
+}
+
+/// One side of a mapping: a field index, or a path into nested records.
+///
+/// `2` and `[2]` mean the same field; `[2, 4]` is field 4 of the record in field 2.
+fn as_path(side: Option<&Json>) -> Result<Vec<usize>, String> {
+    let path = match side {
+        Some(Json::Array(steps)) => steps
+            .iter()
+            .map(|step| {
+                step.as_u64()
+                    .map(|step| step as usize)
+                    .ok_or_else(|| "mapping path takes field indexes".to_string())
+            })
+            .collect::<Result<Vec<usize>, String>>()?,
+
+        Some(index) => vec![index.as_u64().ok_or("bad mapping")? as usize],
+        None => return Err("mapping must be [from, to]".into()),
+    };
+
+    if path.is_empty() {
+        return Err("a mapping path needs at least one field".into());
+    }
+
+    Ok(path)
 }
 
 // ---------- methods ----------

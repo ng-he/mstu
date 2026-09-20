@@ -14,7 +14,7 @@ export default function mount(plugin) {
   let ended = false
   let open = false
 
-  plugin.resize(320, 300)
+  plugin.fit(320)
 
   const showState = (text, lit) => {
     el('state').textContent = text
@@ -67,6 +67,7 @@ export default function mount(plugin) {
   plugin.onEvent('file.changed', ({ file_name, codec }) => {
     el('file').textContent = file_name.split('/').pop()
     el('codec').textContent = codec
+    el('codec').hidden = !codec
     el('watch').disabled = !file_name
 
     ended = false

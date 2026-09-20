@@ -8,98 +8,102 @@
       .transport {
         display: flex;
         align-items: center;
-        gap: 8px;
-        margin-top: 9px;
-      }
-
-      .transport select {
-        padding: 3px 5px;
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        background: var(--bg-input);
-        color: var(--text);
-        font: inherit;
-        font-size: 11px;
+        gap: 10px;
+        margin-top: 10px;
       }
 
       .toggle {
         display: flex;
         align-items: center;
         gap: 5px;
-        color: var(--text-dim);
+        color: var(--mstu-text-dim);
         cursor: pointer;
         user-select: none;
+      }
+
+      .toggle input {
+        margin: 0;
+        accent-color: var(--mstu-accent);
       }
 
       /* Seeking is only possible when the source can index by time. */
       .scrub {
         position: relative;
-        height: 4px;
-        margin-top: 11px;
-        border-radius: 2px;
-        background: #1a1a1a;
+        height: 14px;
+        margin-top: 12px;
         cursor: pointer;
       }
 
       .scrub[aria-disabled='true'] {
         cursor: default;
-        opacity: 0.5;
+        opacity: 0.45;
+      }
+
+      .scrub .track {
+        position: absolute;
+        inset: 5px 0;
+        border-radius: 2px;
+        background: var(--mstu-bg-input);
       }
 
       .scrub .played {
         position: absolute;
-        inset: 0 auto 0 0;
+        inset: 5px auto 5px 0;
         width: 0;
         border-radius: 2px;
-        background: var(--accent);
+        background: var(--mstu-accent);
       }
 
       .scrub .head {
         position: absolute;
         top: 50%;
         left: 0;
-        width: 9px;
-        height: 9px;
-        margin: -4.5px 0 0 -4.5px;
+        width: 10px;
+        height: 10px;
+        margin: -5px 0 0 -5px;
         border-radius: 50%;
-        background: var(--accent);
+        background: var(--mstu-accent);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
       }
 
       .clock {
-        margin-top: 7px;
-        font-family: 'IBM Plex Mono', ui-monospace, monospace;
+        display: flex;
+        gap: 4px;
+        margin-top: 6px;
+        font-family: var(--mstu-mono);
         font-size: 10px;
-        color: var(--text-dim);
+        font-variant-numeric: tabular-nums;
+        color: var(--mstu-text-faint);
       }
 
-      #watch.on {
-        border-color: var(--accent);
-        color: var(--accent);
+      .clock #at {
+        color: var(--mstu-text-dim);
       }
     </style>
   </head>
   <body>
-    <div class="label">Source file</div>
+    <div class="mstu-label">Source file</div>
 
-    <div class="field">
+    <div class="mstu-field">
       <input id="path" placeholder="No file selected" />
       <button id="browse" title="Choose a file">…</button>
     </div>
 
-    <div class="meta">
-      <span class="chip" id="codec">—</span>
-      <span class="dim" id="file">no file open</span>
+    <div class="mstu-meta">
+      <span class="mstu-chip" id="codec" hidden></span>
+      <span class="mstu-dim" id="file">no file open</span>
     </div>
 
     <div class="scrub" id="scrub" aria-disabled="true">
+      <span class="track"></span>
       <span class="played" id="played"></span>
       <span class="head" id="head"></span>
     </div>
 
-    <div class="clock"><span id="at">0:00</span> / <span id="total">--:--</span></div>
+    <div class="clock"><span id="at">0:00</span>/<span id="total">--:--</span></div>
 
     <div class="transport">
-      <select id="rate" title="Playback speed">
+      <select class="mstu-select" id="rate" title="Playback speed">
         <option value="1">1x</option>
         <option value="0.5">0.5x</option>
         <option value="2">2x</option>
@@ -109,13 +113,13 @@
 
       <label class="toggle"><input type="checkbox" id="loop" /> loop</label>
 
-      <button class="action" id="watch" disabled>Preview</button>
+      <button class="mstu-action" id="watch" disabled>Preview</button>
     </div>
 
-    <div class="status">
-      <span class="dot" id="dot"></span>
+    <div class="mstu-status">
+      <span class="mstu-dot" id="dot"></span>
       <span id="state">idle</span>
-      <span class="count" id="samples">0</span>
+      <span class="mstu-count" id="samples">0</span>
     </div>
 
     <script type="module" src="./index.js"></script>

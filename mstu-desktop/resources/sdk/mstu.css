@@ -1,17 +1,36 @@
 /* Theme and building blocks for plugin UIs.
    Kept in step with the host so a plugin looks native without copying it.
-   Pages live in a shadow root, so :host stands in for both :root and body. */
+   Pages live in a shadow root, so :host stands in for both :root and body.
+   Everything the host provides is prefixed mstu-; a plugin's own classes are its own. */
 
 :host {
-  --bg: #262626;
-  --bg-input: #1a1a1a;
-  --border: #3d3d3d;
-  --text: #e6e6e6;
-  --text-dim: #969696;
-  --text-faint: #6b6b6b;
-  --accent: #ff6c37;
-  --green: #3ba55d;
-  --red: #f04438;
+  --mstu-bg: #202026;
+  --mstu-bg-input: #131316;
+  --mstu-bg-hover: #2a2a32;
+  --mstu-border: #33333c;
+  --mstu-border-strong: #43434e;
+  --mstu-text: #e8e8ec;
+  --mstu-text-dim: #9a9aa4;
+  --mstu-text-faint: #6b6b76;
+  --mstu-accent: #ff6c37;
+  --mstu-accent-soft: rgba(255, 108, 55, 0.14);
+  --mstu-green: #3ecf8e;
+  --mstu-red: #f04438;
+  --mstu-radius: 5px;
+  --mstu-ease: 120ms ease;
+  --mstu-mono: 'IBM Plex Mono', 'Roboto Mono', ui-monospace, monospace;
+
+  /* Older names, for pages written before the prefix. */
+  --bg: var(--mstu-bg);
+  --bg-input: var(--mstu-bg-input);
+  --border: var(--mstu-border);
+  --text: var(--mstu-text);
+  --text-dim: var(--mstu-text-dim);
+  --text-faint: var(--mstu-text-faint);
+  --accent: var(--mstu-accent);
+  --green: var(--mstu-green);
+  --red: var(--mstu-red);
+
   color-scheme: dark;
 }
 
@@ -21,94 +40,152 @@
 
 :host {
   display: block;
-  padding: 10px;
-  background: var(--bg);
-  color: var(--text);
+  padding: 11px 12px 12px;
+  background: var(--mstu-bg);
+  color: var(--mstu-text);
   font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 12px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--mstu-accent-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--mstu-accent);
+  outline-offset: 1px;
 }
 
 /* ---------- form ---------- */
 
-.label {
-  margin-bottom: 5px;
+.mstu-label {
+  margin-bottom: 6px;
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--mstu-text-faint);
 }
 
-.field {
+.mstu-field {
   display: flex;
   gap: 5px;
 }
 
-.field input {
+.mstu-field input,
+.mstu-input {
   flex: 1;
   min-width: 0;
-  padding: 5px 7px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg-input);
-  color: var(--text);
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--mstu-border);
+  border-radius: var(--mstu-radius);
+  background: var(--mstu-bg-input);
+  color: var(--mstu-text);
   font: inherit;
   font-size: 11px;
   text-overflow: ellipsis;
+  transition:
+    border-color var(--mstu-ease),
+    background var(--mstu-ease);
 }
 
-.field input:focus {
+.mstu-field input::placeholder {
+  color: var(--mstu-text-faint);
+}
+
+.mstu-field input:hover:not(:disabled),
+.mstu-input:hover:not(:disabled) {
+  border-color: var(--mstu-border-strong);
+}
+
+.mstu-field input:focus,
+.mstu-input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--mstu-accent);
 }
 
-.field button {
-  padding: 0 9px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+.mstu-field button {
+  flex: none;
+  width: 28px;
+  height: 26px;
+  border: 1px solid var(--mstu-border);
+  border-radius: var(--mstu-radius);
   background: none;
-  color: var(--text-dim);
+  color: var(--mstu-text-dim);
   font: inherit;
+  line-height: 1;
   cursor: pointer;
+  transition:
+    color var(--mstu-ease),
+    border-color var(--mstu-ease),
+    background var(--mstu-ease);
 }
 
-.field button:hover {
-  color: var(--text);
-  border-color: var(--text-faint);
+.mstu-field button:hover {
+  background: var(--mstu-bg-hover);
+  border-color: var(--mstu-border-strong);
+  color: var(--mstu-text);
+}
+
+.mstu-select {
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--mstu-border);
+  border-radius: var(--mstu-radius);
+  background: var(--mstu-bg-input);
+  color: var(--mstu-text);
+  font: inherit;
+  font-size: 11px;
+  transition: border-color var(--mstu-ease);
+}
+
+.mstu-select:hover {
+  border-color: var(--mstu-border-strong);
+}
+
+.mstu-select:focus {
+  outline: none;
+  border-color: var(--mstu-accent);
 }
 
 /* ---------- readouts ---------- */
 
-.meta {
+.mstu-meta {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-top: 9px;
+  min-width: 0;
 }
 
-.chip {
+.mstu-chip {
+  flex: none;
   padding: 2px 6px;
   border-radius: 3px;
-  background: rgba(255, 108, 55, 0.14);
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 600;
+  background: var(--mstu-accent-soft);
+  color: var(--mstu-accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
-.dim {
-  color: var(--text-dim);
+.mstu-dim {
+  color: var(--mstu-text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 /* A path reads better truncated from the left. */
-.path {
+.mstu-path {
   margin-top: 9px;
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-family: var(--mstu-mono);
   font-size: 10px;
-  color: var(--text-dim);
+  color: var(--mstu-text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -118,57 +195,86 @@
 
 /* ---------- status bar ---------- */
 
-.status {
+.mstu-status {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 9px;
+  gap: 7px;
+  margin-top: 10px;
   padding-top: 9px;
-  border-top: 1px solid #303030;
-  color: var(--text-dim);
+  border-top: 1px solid var(--mstu-border);
+  color: var(--mstu-text-dim);
+  font-size: 11px;
 }
 
-.dot {
+.mstu-dot {
+  flex: none;
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--text-faint);
-  flex: none;
+  background: var(--mstu-text-faint);
+  transition:
+    background var(--mstu-ease),
+    box-shadow var(--mstu-ease);
 }
 
-.dot.on {
-  background: var(--green);
-  box-shadow: 0 0 0 3px rgba(59, 165, 93, 0.16);
+.mstu-dot.on {
+  background: var(--mstu-green);
+  box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.16);
+}
+
+/* A button in the status bar follows the value rather than pushing it around. */
+.mstu-status .mstu-action {
+  margin-left: 8px;
 }
 
 /* Pushes a value to the right of the status bar. */
-.count {
+.mstu-count {
   margin-left: auto;
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-family: var(--mstu-mono);
   font-size: 11px;
-  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  color: var(--mstu-text);
 }
 
 /* ---------- actions ---------- */
 
-.action {
+.mstu-action {
   margin-left: auto;
-  padding: 3px 9px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--mstu-border);
+  border-radius: var(--mstu-radius);
   background: none;
-  color: var(--text-dim);
+  color: var(--mstu-text-dim);
   font: inherit;
   font-size: 11px;
   cursor: pointer;
+  transition:
+    color var(--mstu-ease),
+    border-color var(--mstu-ease),
+    background var(--mstu-ease);
 }
 
-.action:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
+.mstu-action:hover:not(:disabled) {
+  border-color: var(--mstu-accent);
+  background: var(--mstu-accent-soft);
+  color: var(--mstu-accent);
 }
 
-.action:disabled {
+/* On, as in a panel this button opened. */
+.mstu-action.on {
+  border-color: var(--mstu-accent);
+  background: var(--mstu-accent-soft);
+  color: var(--mstu-accent);
+}
+
+.mstu-action:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
 }

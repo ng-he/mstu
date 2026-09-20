@@ -61,6 +61,23 @@ const loaded = (nodes: Node[]): Promise<unknown> =>
       )
   )
 
+/// Height the page's content wants, measured with the box let go of for a moment.
+///
+/// offsetHeight is layout, so the canvas zoom does not skew it.
+function contentHeight(element: HTMLElement): number {
+  const { flex, height } = element.style
+
+  element.style.flex = 'none'
+  element.style.height = 'auto'
+
+  const measured = element.offsetHeight
+
+  element.style.flex = flex
+  element.style.height = height
+
+  return measured
+}
+
 /// A plugin page in a shadow root: the host's styles stay out, and it zooms like the rest of the canvas.
 function PluginView({ host, plugin, page, role, className, style }: Props): JSX.Element {
   const box = useRef<HTMLDivElement>(null)
@@ -70,7 +87,16 @@ function PluginView({ host, plugin, page, role, className, style }: Props): JSX.
     if (!element) return
 
     const root = element.shadowRoot ?? element.attachShadow({ mode: 'open' })
-    const { api, dispose } = host.attach(plugin, role, root)
+
+    // A node is asked for as a whole, chrome included; a popup's size is the page's.
+    const wanted = (): number => {
+      const node = role === 'node' ? element.closest('.node') : null
+      const chrome = node instanceof HTMLElement ? node.offsetHeight - element.offsetHeight : 0
+
+      return contentHeight(element) + Math.max(0, chrome)
+    }
+
+    const { api, dispose } = host.attach(plugin, role, root, wanted)
     const cleanups: (() => void)[] = []
     let gone = false
 

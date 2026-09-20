@@ -8,11 +8,12 @@ import Graph, {
   NODE_HEIGHT,
   NODE_WIDTH
 } from './components/Graph'
-import Inspector from './components/Inspector'
 import PluginPopup from './components/PluginPopup'
 import Sidebar from './components/Sidebar'
 import Toolbar from './components/Toolbar'
+import MappingEditor from './components/MappingEditor'
 import { engine } from './engine'
+import { byTarget, leaves, pathKey } from './fields'
 import { PluginHost, type HostHooks } from './pluginHost'
 import type { Connector, Field, Library, Mapping, Node, Popup, Subscription } from './types'
 
@@ -22,20 +23,29 @@ const newId = (prefix: string): string => `${prefix}${nextId++}`
 const clamp = (value: number, low: number, high: number): number =>
   Math.min(high, Math.max(low, value))
 
-/// A new row defaults to the first unmapped target field and a source field
-/// of the same type: 0 -> 0 is usually a type mismatch the engine will drop.
-function defaultMapping(source: Field[], target: Field[], taken: Set<number>): Mapping {
-  const to = Math.max(
-    0,
-    target.findIndex((_, index) => !taken.has(index))
-  )
+/// Gap between nodes dropped on the canvas, and how far right they go before wrapping.
+const GAP = 36
+const ROW_END = 1200
 
-  const from = Math.max(
-    0,
-    source.findIndex((field) => field.type === target[to]?.type)
-  )
+/// Somewhere clear of what is already there, so a new node never lands on another.
+function freeSpot(nodes: Node[]): { x: number; y: number } {
+  const last = nodes[nodes.length - 1]
 
-  return { id: newId('m'), from, to }
+  if (!last) return { x: 60, y: 80 }
+
+  const x = last.x + last.width + GAP
+
+  if (x + NODE_WIDTH <= ROW_END) return { x, y: last.y }
+
+  return { x: 60, y: Math.max(...nodes.map((node) => node.y + node.height)) + GAP }
+}
+
+/// Fills one target field from a source field, or clears it with null. A target
+/// field holds at most one source, so setting it replaces whatever was there.
+function fill(mappings: Mapping[], to: number[], from: number[] | null): Mapping[] {
+  const rest = mappings.filter((mapping) => pathKey(mapping.to) !== pathKey(to))
+
+  return from === null ? rest : [...rest, { id: newId('m'), from, to }]
 }
 
 /// The engine keys a subscription by event and command, so two rows sharing a
@@ -72,11 +82,16 @@ function freePair(
 /// A command payload is all-or-nothing, so an unmapped field is a message the
 /// engine drops.
 function autoMappings(source: Field[], target: Field[]): Mapping[] {
-  return target.flatMap((field, to) => {
-    const named = source.findIndex((item) => item.name === field.name)
-    const from = named >= 0 ? named : source.findIndex((item) => item.type === field.type)
+  const from = leaves(source)
 
-    return from < 0 ? [] : [{ id: newId('m'), from, to }]
+  return leaves(target).flatMap((leaf) => {
+    const sameName = from.find(
+      (item) => item.label === leaf.label && item.field.type === leaf.field.type
+    )
+
+    const match = sameName ?? from.find((item) => item.field.type === leaf.field.type)
+
+    return match ? [{ id: newId('m'), from: match.path, to: leaf.path }] : []
   })
 }
 
@@ -90,6 +105,10 @@ function App(): JSX.Element {
   const [connectorId, setConnectorId] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [popups, setPopups] = useState<Popup[]>([])
+
+  /// Plugins whose live values are moving, polled rather than pushed: the
+  /// engine sends 4 snapshots a second and the canvas need not redraw on each.
+  const [activity, setActivity] = useState<string[]>([])
 
   const hadGraph = useRef(false)
 
@@ -199,6 +218,20 @@ function App(): JSX.Element {
   }, [nodes])
 
   useEffect(() => {
+    const tick = setInterval(() => {
+      const moving = host.active()
+
+      setActivity((current) =>
+        current.length === moving.length && current.every((item) => moving.includes(item))
+          ? current
+          : moving
+      )
+    }, 400)
+
+    return () => clearInterval(tick)
+  }, [host])
+
+  useEffect(() => {
     if (!connected || pipeline !== null) return
 
     engine
@@ -213,7 +246,8 @@ function App(): JSX.Element {
 
   // ---------- graph editing ----------
 
-  async function addNode(library: Library): Promise<void> {
+  /// `at` is where a dragged plugin was dropped; a clicked one finds its own spot.
+  async function addNode(library: Library, at?: { x: number; y: number }): Promise<void> {
     if (pipeline === null) return
 
     try {
@@ -231,8 +265,7 @@ function App(): JSX.Element {
           running: false,
           width: NODE_WIDTH,
           height: NODE_HEIGHT,
-          x: 60 + current.length * 80,
-          y: 80 + current.length * 60
+          ...(at ?? freeSpot(current))
         }
       ])
     } catch (problem) {
@@ -329,6 +362,82 @@ function App(): JSX.Element {
     if (moved) dropSubscription(previous)
 
     commitSubscription(subscription)
+  }
+
+  /// Hands back the new subscription so the editor can open it.
+  function addSubscription(): string | null {
+    const events = libraryOf(source)?.events ?? []
+    const commands = libraryOf(target)?.commands ?? []
+
+    const pair = freePair(connector?.subscriptions ?? [], events.length, commands.length)
+
+    if (!pair) {
+      report(new Error('Every event and command pair is already subscribed'))
+      return null
+    }
+
+    const subscription: Subscription = {
+      id: newId('s'),
+      event: pair.event,
+      command: pair.command,
+      mappings: autoMappings(
+        events[pair.event]?.schema?.fields ?? [],
+        commands[pair.command]?.schema?.fields ?? []
+      )
+    }
+
+    updateConnector((current) => ({
+      ...current,
+      subscriptions: [...current.subscriptions, subscription]
+    }))
+
+    commitSubscription(subscription)
+
+    return subscription.id
+  }
+
+  function removeSubscription(subscriptionId: string): void {
+    const previous = connector?.subscriptions.find((item) => item.id === subscriptionId)
+
+    if (previous) dropSubscription(previous)
+
+    updateConnector((current) => ({
+      ...current,
+      subscriptions: current.subscriptions.filter((item) => item.id !== subscriptionId)
+    }))
+  }
+
+  function changeSubscription(subscriptionId: string, patch: Partial<Subscription>): void {
+    const events = libraryOf(source)?.events ?? []
+    const commands = libraryOf(target)?.commands ?? []
+
+    const current = connector?.subscriptions.find((item) => item.id === subscriptionId)
+    if (!current) return
+
+    const next = { ...current, ...patch }
+
+    // Moving onto a pair another subscription holds would collapse the two into
+    // one registration, and removing either would kill both.
+    if (pairTaken(connector?.subscriptions ?? [], next.event, next.command, next.id)) {
+      report(
+        new Error(
+          `${events[next.event]?.name} → ${commands[next.command]?.name} is already subscribed`
+        )
+      )
+
+      return
+    }
+
+    editSubscription(subscriptionId, () => ({
+      ...next,
+
+      // The old mappings index into the schema that just changed, so they would
+      // now point at the wrong fields.
+      mappings: autoMappings(
+        events[next.event]?.schema?.fields ?? [],
+        commands[next.command]?.schema?.fields ?? []
+      )
+    }))
   }
 
   async function toggleRun(): Promise<void> {
@@ -441,139 +550,60 @@ function App(): JSX.Element {
               )
             }
             host={host}
+            activity={activity}
+            onDropLibrary={(key, x, y) => {
+              const library = libraries.find((item) => item.key === key)
+              if (library) addNode(library, { x, y })
+            }}
           />
 
-          <Inspector
-            connector={connector}
-            source={libraryOf(source)}
-            target={libraryOf(target)}
-            onChangeMapping={(id, patch) =>
-              editMappings((current) => ({
-                ...current,
-                mappings: current.mappings.map((mapping) =>
-                  mapping.id === id ? { ...mapping, ...patch } : mapping
-                )
-              }))
-            }
-            onRemoveMapping={(id) =>
-              editMappings((current) => ({
-                ...current,
-                mappings: current.mappings.filter((mapping) => mapping.id !== id)
-              }))
-            }
-            onAddMapping={() =>
-              editMappings((current) => ({
-                ...current,
-                mappings: [
-                  ...current.mappings,
-                  defaultMapping(
-                    libraryOf(source)?.output?.fields ?? [],
-                    libraryOf(target)?.input?.fields ?? [],
-                    new Set(current.mappings.map((mapping) => mapping.to))
-                  )
-                ]
-              }))
-            }
-            onAddSubscription={() => {
-              const events = libraryOf(source)?.events ?? []
-              const commands = libraryOf(target)?.commands ?? []
-
-              const pair = freePair(connector?.subscriptions ?? [], events.length, commands.length)
-
-              if (!pair) {
-                report(new Error('Every event and command pair is already subscribed'))
-                return
-              }
-
-              const subscription: Subscription = {
-                id: newId('s'),
-                event: pair.event,
-                command: pair.command,
-                mappings: autoMappings(
-                  events[pair.event]?.schema?.fields ?? [],
-                  commands[pair.command]?.schema?.fields ?? []
-                )
-              }
-
-              updateConnector((current) => ({
-                ...current,
-                subscriptions: [...current.subscriptions, subscription]
-              }))
-
-              commitSubscription(subscription)
-            }}
-            onRemoveSubscription={(subscriptionId) => {
-              const previous = connector?.subscriptions.find((item) => item.id === subscriptionId)
-
-              if (previous) dropSubscription(previous)
-
-              updateConnector((current) => ({
-                ...current,
-                subscriptions: current.subscriptions.filter((item) => item.id !== subscriptionId)
-              }))
-            }}
-            onChangeSubscription={(subscriptionId, patch) => {
-              const events = libraryOf(source)?.events ?? []
-              const commands = libraryOf(target)?.commands ?? []
-
-              const current = connector?.subscriptions.find((item) => item.id === subscriptionId)
-              if (!current) return
-
-              const next = { ...current, ...patch }
-
-              // Moving onto a pair another row holds would collapse the two
-              // into one registration, and removing either would kill both.
-              if (pairTaken(connector?.subscriptions ?? [], next.event, next.command, next.id)) {
-                report(
-                  new Error(
-                    `${events[next.event]?.name} → ${commands[next.command]?.name} is already subscribed`
-                  )
-                )
-
-                return
-              }
-
-              editSubscription(subscriptionId, () => ({
-                ...next,
-
-                // The old rows index into the schema that just changed, so
-                // they would now point at the wrong fields.
-                mappings: autoMappings(
-                  events[next.event]?.schema?.fields ?? [],
-                  commands[next.command]?.schema?.fields ?? []
-                )
-              }))
-            }}
-            onAddSubscriptionMapping={(subscriptionId) =>
-              editSubscription(subscriptionId, (current) => ({
-                ...current,
-                mappings: [
-                  ...current.mappings,
-                  defaultMapping(
-                    libraryOf(source)?.events[current.event]?.schema?.fields ?? [],
-                    libraryOf(target)?.commands[current.command]?.schema?.fields ?? [],
-                    new Set(current.mappings.map((mapping) => mapping.to))
-                  )
-                ]
-              }))
-            }
-            onRemoveSubscriptionMapping={(subscriptionId, mappingId) =>
-              editSubscription(subscriptionId, (current) => ({
-                ...current,
-                mappings: current.mappings.filter((mapping) => mapping.id !== mappingId)
-              }))
-            }
-            onChangeSubscriptionMapping={(subscriptionId, mappingId, patch) =>
-              editSubscription(subscriptionId, (current) => ({
-                ...current,
-                mappings: current.mappings.map((mapping) =>
-                  mapping.id === mappingId ? { ...mapping, ...patch } : mapping
-                )
-              }))
-            }
-          />
         </div>
       </div>
+
+      {/* Selecting a link opens its wiring; there is nowhere else to edit one. */}
+      {connector && libraryOf(source) && libraryOf(target) && (
+        <MappingEditor
+          connector={connector}
+          source={libraryOf(source) as Library}
+          target={libraryOf(target) as Library}
+          onSetMapping={(to, from) =>
+            editMappings((current) => ({ ...current, mappings: fill(current.mappings, to, from) }))
+          }
+          onSetSubscriptionMapping={(subscriptionId, to, from) =>
+            editSubscription(subscriptionId, (current) => ({
+              ...current,
+              mappings: fill(current.mappings, to, from)
+            }))
+          }
+          onAutoMap={(subscriptionId) => {
+            const subscription = connector.subscriptions.find((item) => item.id === subscriptionId)
+
+            if (!subscription) {
+              editMappings((current) => ({
+                ...current,
+                mappings: autoMappings(
+                  libraryOf(source)?.output?.fields ?? [],
+                  libraryOf(target)?.input?.fields ?? []
+                )
+              }))
+
+              return
+            }
+
+            editSubscription(subscription.id, (current) => ({
+              ...current,
+              mappings: autoMappings(
+                libraryOf(source)?.events[current.event]?.schema?.fields ?? [],
+                libraryOf(target)?.commands[current.command]?.schema?.fields ?? []
+              )
+            }))
+          }}
+          onAddSubscription={addSubscription}
+          onRemoveSubscription={removeSubscription}
+          onChangeSubscription={changeSubscription}
+          onClose={() => setConnectorId(null)}
+        />
+      )}
 
       {popups.map((popup) => (
         <PluginPopup

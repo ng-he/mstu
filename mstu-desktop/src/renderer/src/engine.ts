@@ -3,8 +3,8 @@ import type { Library, Mapping } from './types'
 const call = <T,>(method: string, params: unknown = {}): Promise<T> =>
   window.mstu.call<T>(method, params)
 
-/// Engine mappings are `[from, to]` field index pairs.
-const pairs = (mappings: Mapping[]): number[][] =>
+/// Engine mappings are `[from, to]` pairs of paths into the two messages.
+const pairs = (mappings: Mapping[]): number[][][] =>
   mappings.map((mapping) => [mapping.from, mapping.to])
 
 export const engine = {

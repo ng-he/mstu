@@ -57,23 +57,48 @@ export class PluginHost {
   private popups = new Set<string>()
   private running = false
 
+  /// Last live snapshot per plugin, and when it last differed from the one before.
+  private snapshots = new Map<string, string>()
+  private moved = new Map<string, number>()
+
   constructor(hooks: HostHooks) {
     this.hooks = hooks
   }
 
   /// Registers a page; the returned dispose drops its listeners.
-  attach(plugin: string, role: PageRole, root: ShadowRoot): { api: PluginApi; dispose: () => void } {
+  ///
+  /// `box` measures what the mounted page needs, including the node's own chrome.
+  attach(
+    plugin: string,
+    role: PageRole,
+    root: ShadowRoot,
+    box: () => number = () => 0
+  ): { api: PluginApi; dispose: () => void } {
     const page: Page = { plugin, live: [], state: [], settings: [], popup: [], events: new Map() }
 
     this.pages.add(page)
 
-    return { api: this.createApi(page, role, root), dispose: () => this.pages.delete(page) }
+    return { api: this.createApi(page, role, root, box), dispose: () => this.pages.delete(page) }
   }
 
   live(plugin: string, values: unknown[]): void {
     const library = this.hooks.library(plugin)
+    const snapshot = JSON.stringify(values)
+
+    // A plugin whose readings changed since the last push is doing something.
+    if (this.snapshots.get(plugin) !== snapshot) {
+      this.snapshots.set(plugin, snapshot)
+      this.moved.set(plugin, Date.now())
+    }
 
     this.each(plugin, (page) => page.live.forEach((listener) => listener(named(library?.live, values))))
+  }
+
+  /// Plugins whose readings moved within `window` milliseconds.
+  active(window = 800): string[] {
+    const since = Date.now() - window
+
+    return [...this.moved.entries()].filter(([, at]) => at >= since).map(([plugin]) => plugin)
   }
 
   event(plugin: string, index: number, values: unknown[]): void {
@@ -103,11 +128,15 @@ export class PluginHost {
   forget(plugin: string): void {
     this.settings.delete(plugin)
     this.popups.delete(plugin)
+    this.snapshots.delete(plugin)
+    this.moved.delete(plugin)
   }
 
   clear(): void {
     this.settings.clear()
     this.popups.clear()
+    this.snapshots.clear()
+    this.moved.clear()
     this.running = false
   }
 
@@ -130,7 +159,7 @@ export class PluginHost {
     this.each(plugin, (page) => page !== except && page.settings.forEach((listener) => listener(values)))
   }
 
-  private createApi(page: Page, role: PageRole, root: ShadowRoot) {
+  private createApi(page: Page, role: PageRole, root: ShadowRoot, box: () => number) {
     // The getters below are not arrows, so they cannot use `this`.
     const host = this
     const { plugin } = page
@@ -230,6 +259,9 @@ export class PluginHost {
       /// Asks for a different box: the node's on the canvas, or the popup's.
       resize: (width?: number, height?: number): void =>
         this.hooks.resize(plugin, role, width, height),
+
+      /// Asks for the height this page's own content needs, at the given width.
+      fit: (width?: number): void => this.hooks.resize(plugin, role, width, box()),
 
       /// Opens another page of this UI in a window floating over the canvas.
       popup: (pagePath: string, options: Omit<PopupRequest, 'page'> = {}): void =>

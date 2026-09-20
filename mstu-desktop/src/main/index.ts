@@ -10,8 +10,7 @@ const uiFolders = new Map<string, string>()
 
 let window: BrowserWindow | null = null
 
-/// The engine keeps pushing while the window is being torn down, and reaching
-/// into a destroyed one throws all the way out of the main process.
+/// Reaching into a window destroyed mid-push throws out of the main process.
 const send = (channel: string, payload: unknown): void => {
   if (!window || window.isDestroyed()) return
 

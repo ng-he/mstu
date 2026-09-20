@@ -9,12 +9,14 @@ type Props = {
   onToggleRun: () => void
 }
 
+const count = (many: number, noun: string): string => `${many} ${noun}${many === 1 ? '' : 's'}`
+
 function Toolbar(props: Props): JSX.Element {
   return (
     <header className="toolbar">
       <span className="title">{props.name}</span>
       <span className="meta">
-        {props.nodes} nodes · {props.connectors} connectors
+        {count(props.nodes, 'node')} · {count(props.connectors, 'connector')}
       </span>
 
       {props.error && (

@@ -1,35 +1,55 @@
 :root {
-  /* Postman dark neutrals */
-  --bg-chrome: #1a1a1a;
-  --bg-sidebar: #1e1e1e;
-  --bg-canvas: #161616;
-  --bg-panel: #202020;
-  --bg-card: #262626;
-  --bg-card-head: #303030;
-  --bg-input: #171717;
-  --bg-hover: #2b2b2b;
+  /* Neutrals: the canvas is the darkest thing on screen, chrome sits above it. */
+  --bg-canvas: #101012;
+  --bg-sidebar: #16161a;
+  --bg-chrome: #18181c;
+  --bg-panel: #1b1b20;
+  --bg-card: #202026;
+  --bg-card-head: #26262d;
+  --bg-input: #131316;
+  --bg-hover: #2a2a32;
 
-  --border: #2e2e2e;
-  --border-strong: #3d3d3d;
+  --border: #2a2a32;
+  --border-strong: #3a3a44;
 
-  --text: #e6e6e6;
-  --text-dim: #969696;
-  --text-faint: #6b6b6b;
+  --text: #e8e8ec;
+  --text-dim: #9a9aa4;
+  --text-faint: #6b6b76;
 
-  /* Postman orange */
+  /* Warm is reserved: orange means "you picked this", red means "this is wrong". */
   --accent: #ff6c37;
   --accent-soft: rgba(255, 108, 55, 0.14);
-
-  --green: #3ba55d;
   --red: #f04438;
   --amber: #f5a623;
+
+  /* What a plugin is in the graph: sources make data, sinks consume it. */
+  --source: #2dd4bf;
+  --transform: #a970ff;
+  --sink: #4a9eff;
+
+  /* Data actually moving, as opposed to a pipeline merely started. */
+  --live: #3ecf8e;
+
+  --green: #3ecf8e;
   --blue: #4a9eff;
   --purple: #a970ff;
 
+  --radius-sm: 4px;
   --radius: 6px;
+  --radius-lg: 8px;
+
+  /* One elevation scale: resting surfaces, things that float, things that sit above all. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 6px 18px rgba(0, 0, 0, 0.4);
+  --shadow-3: 0 16px 44px rgba(0, 0, 0, 0.55);
+
+  --ease: 120ms ease;
+
+  --mono: 'IBM Plex Mono', 'Roboto Mono', ui-monospace, monospace;
 
   font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 13px;
+  line-height: 1.45;
   color: var(--text);
   color-scheme: dark;
 }
@@ -50,6 +70,14 @@ button {
   background: none;
   border: none;
   cursor: pointer;
+  transition:
+    background var(--ease),
+    border-color var(--ease),
+    color var(--ease);
+}
+
+button:disabled {
+  cursor: default;
 }
 
 select,
@@ -58,8 +86,26 @@ input {
   color: inherit;
   background: var(--bg-input);
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 5px 7px;
+  transition: border-color var(--ease);
+}
+
+/* The app draws its own caret; the platform's is a different app's furniture. */
+select {
+  appearance: none;
+  padding-right: 22px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9aa4' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  background-size: 9px;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+select:hover:not(:disabled),
+input:hover:not(:disabled) {
+  border-color: #4a4a56;
 }
 
 select:focus,
@@ -68,16 +114,37 @@ input:focus {
   border-color: var(--accent);
 }
 
+/* One focus ring everywhere, for keyboard users only. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3a3a3a;
+  background: #33333c;
   border: 3px solid transparent;
   background-clip: content-box;
   border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #45454f;
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
 }
 
 /* ---------- shell ---------- */
@@ -96,6 +163,7 @@ input:focus {
 }
 
 .stage {
+  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -115,6 +183,15 @@ input:focus {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+/* The pipelines take what they need; the plugin list takes the rest. */
+.sidebar-section.pipelines {
+  flex: none;
+  max-height: 40%;
+}
+
+.sidebar-section.plugins {
   flex: 1;
 }
 
@@ -129,14 +206,87 @@ input:focus {
   padding: 10px 12px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
+}
+
+.sidebar-head .tally {
+  margin-right: auto;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.sidebar-search {
+  padding: 0 12px 8px;
+}
+
+.sidebar-search input {
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  border-color: var(--border);
+  font-size: 12px;
 }
 
 .sidebar-list {
   overflow-y: auto;
   padding-bottom: 8px;
+}
+
+/* What the plugins below it do, with the colour they carry on the canvas. */
+.plugin-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 12px 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.plugin-group::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--role, var(--text-faint));
+}
+
+.plugin-group.source,
+.plugin-row.source {
+  --role: var(--source);
+}
+
+.plugin-group.transform,
+.plugin-row.transform {
+  --role: var(--transform);
+}
+
+.plugin-group.sink,
+.plugin-row.sink {
+  --role: var(--sink);
+}
+
+.plugin-row .version {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity var(--ease);
+}
+
+.plugin-row:hover .version {
+  opacity: 1;
 }
 
 .icon-button {
@@ -183,8 +333,8 @@ input:focus {
 }
 
 .status-dot.running {
-  background: var(--green);
-  box-shadow: 0 0 0 3px rgba(59, 165, 93, 0.16);
+  background: var(--live);
+  box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.16);
 }
 
 .plugin-row {
@@ -195,12 +345,17 @@ input:focus {
   padding: 7px 12px;
   text-align: left;
   color: var(--text-dim);
-  cursor: grab;
+  border-left: 2px solid transparent;
 }
 
 .plugin-row:hover {
   background: var(--bg-hover);
+  border-left-color: var(--role, var(--border-strong));
   color: var(--text);
+}
+
+.plugin-row:active {
+  cursor: grabbing;
 }
 
 .plugin-row .name {
@@ -210,24 +365,46 @@ input:focus {
   white-space: nowrap;
 }
 
+/* What the row does, said only when the pointer is on it. */
+.plugin-row::after {
+  content: '+';
+  flex: none;
+  width: 12px;
+  color: var(--accent);
+  font-size: 13px;
+  text-align: center;
+  opacity: 0;
+  transition: opacity var(--ease);
+}
+
+.plugin-row:hover::after,
+.plugin-row:focus-visible::after {
+  opacity: 1;
+}
+
 .kind-tag {
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
 }
 
+/* The same three colours the canvas uses, so the list reads as the graph does. */
 .kind-tag.source {
-  color: var(--accent);
+  color: var(--source);
 }
 
 .kind-tag.sink {
-  color: var(--blue);
+  color: var(--sink);
 }
 
 .kind-tag.transform {
-  color: var(--purple);
+  color: var(--transform);
+}
+
+.kind-tag.live {
+  color: var(--live);
 }
 
 /* ---------- toolbar ---------- */
@@ -246,11 +423,13 @@ input:focus {
 .toolbar .title {
   font-size: 13px;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .toolbar .meta {
   color: var(--text-faint);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .toolbar .spacer {
@@ -266,28 +445,40 @@ input:focus {
   border-radius: var(--radius);
   border: 1px solid var(--border-strong);
   color: var(--text-dim);
+  font-size: 12px;
   font-weight: 500;
 }
 
-.button:hover {
+.button:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text);
+}
+
+.button:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+  box-shadow: var(--shadow-1);
 }
 
-.button.primary:hover {
+.button.primary:hover:not(:disabled) {
   background: #f2551a;
+  border-color: #f2551a;
   color: #fff;
 }
 
 .button.danger {
   color: var(--red);
   border-color: rgba(240, 68, 56, 0.4);
+}
+
+.button.danger:hover:not(:disabled) {
+  background: rgba(240, 68, 56, 0.12);
+  color: var(--red);
 }
 
 .button:disabled {
@@ -303,7 +494,7 @@ input:focus {
   min-width: 0;
   overflow: hidden;
   background-color: var(--bg-canvas);
-  background-image: radial-gradient(circle at 1px 1px, #2a2a2a 1px, transparent 0);
+  background-image: radial-gradient(circle at 1px 1px, #26262e 1px, transparent 0);
   background-size: 22px 22px;
 }
 
@@ -358,18 +549,34 @@ input:focus {
 
 .edge {
   fill: none;
-  stroke: #4d4d4d;
+  /* An idle link is plumbing; it carries the source's colour only once it runs. */
+  stroke: #3a3a44;
   stroke-width: 2;
   pointer-events: stroke;
   cursor: pointer;
+  transition: stroke var(--ease);
 }
 
 .edge:hover {
   stroke: var(--text-dim);
 }
 
+/* Data moving: dashes drift from the source towards the sink. */
+.edge.flowing {
+  stroke: var(--role, var(--live));
+  stroke-dasharray: 7 6;
+  animation: edge-flow 700ms linear infinite;
+}
+
+@keyframes edge-flow {
+  to {
+    stroke-dashoffset: -13;
+  }
+}
+
 .edge.selected {
   stroke: var(--accent);
+  stroke-width: 2.5;
 }
 
 .edges.overlay {
@@ -414,12 +621,37 @@ input:focus {
   flex-direction: column;
   background: var(--bg-card);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  transition:
+    box-shadow var(--ease),
+    border-color var(--ease);
 }
 
 .node.selected {
   border-color: var(--accent);
+}
+
+/* The node being dragged leads the stack and lifts off the canvas. */
+.node.dragging {
+  box-shadow: var(--shadow-3);
+}
+
+.node.dragging .node-head {
+  cursor: grabbing;
+}
+
+/* What kind of plugin this is, said once, in the one place colour is free. */
+.node {
+  --role: var(--transform);
+}
+
+.node.source {
+  --role: var(--source);
+}
+
+.node.sink {
+  --role: var(--sink);
 }
 
 .node .stripe {
@@ -428,17 +660,17 @@ input:focus {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 4px;
-  border-radius: var(--radius) 0 0 var(--radius);
-  background: var(--accent);
+  width: 3px;
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  background: var(--role);
 }
 
 .node-head {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  padding: 8px 10px 8px 14px;
-  border-radius: var(--radius) var(--radius) 0 0;
+  gap: 7px;
+  padding: 9px 10px 9px 14px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   background: var(--bg-card-head);
   border-bottom: 1px solid var(--border);
   cursor: grab;
@@ -448,20 +680,60 @@ input:focus {
 .node-head .name {
   font-weight: 600;
   font-size: 12px;
-}
-
-.node-head .id {
-  font-family: 'IBM Plex Mono', 'Roboto Mono', ui-monospace, monospace;
-  font-size: 10px;
-  color: var(--text-faint);
+  letter-spacing: -0.005em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* The instance id is for debugging, so it waits until the pointer is here. */
+.node-head .id {
+  flex: 0 1 auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity var(--ease);
+}
+
+.node:hover .node-head .id {
+  opacity: 1;
+}
+
+/* Data moving through this plugin, which is not the same as the pipeline running. */
+.node-head .pulse {
+  flex: none;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #37373f;
+  transition: background var(--ease);
+}
+
+.node-head .pulse.live {
+  background: var(--live);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(62, 207, 142, 0.5);
+  }
+
+  50% {
+    box-shadow: 0 0 0 4px rgba(62, 207, 142, 0);
+  }
+}
+
 .node-head .power {
   flex: none;
-  margin-left: auto;
+  margin-left: 8px;
   align-self: center;
   width: 28px;
   height: 15px;
@@ -488,12 +760,12 @@ input:focus {
 }
 
 .node-head .power.on {
-  background: rgba(59, 165, 93, 0.22);
-  border-color: var(--green);
+  background: rgba(62, 207, 142, 0.2);
+  border-color: var(--live);
 }
 
 .node-head .power.on .knob {
-  background: var(--green);
+  background: var(--live);
   transform: translateX(13px);
 }
 
@@ -528,7 +800,7 @@ input:focus {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 0 0 var(--radius) var(--radius);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
 /* Shadow host of a plugin page: layout only, since rules here beat the page's own :host. */
@@ -545,7 +817,7 @@ input:focus {
   place-items: center;
   min-height: 56px;
   border: 1px dashed var(--border-strong);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-faint);
   font-size: 11px;
 }
@@ -566,15 +838,15 @@ input:focus {
   overflow: hidden;
   background: var(--bg-card);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
 }
 
 .popup-head {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  padding: 8px 10px 8px 14px;
+  gap: 7px;
+  padding: 9px 10px 9px 14px;
   background: var(--bg-card-head);
   border-bottom: 1px solid var(--border);
   cursor: grab;
@@ -587,7 +859,7 @@ input:focus {
 }
 
 .popup-head .id {
-  font-family: 'IBM Plex Mono', 'Roboto Mono', ui-monospace, monospace;
+  font-family: var(--mono);
   font-size: 10px;
   color: var(--text-faint);
   overflow: hidden;
@@ -615,43 +887,43 @@ input:focus {
   position: absolute;
   top: 50%;
   z-index: 2;
-  width: 14px;
-  height: 14px;
-  margin-top: -7px;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
   padding: 0;
   cursor: crosshair;
   border-radius: 50%;
-  transition: transform 0.1s ease;
-  background: #4a4a4a;
+  background: #3a3a44;
   border: 2px solid var(--bg-canvas);
+  transition:
+    transform 0.1s ease,
+    background var(--ease),
+    box-shadow var(--ease);
 }
 
 .port.in {
-  left: -8px;
+  left: -7px;
 }
 
 .port.out {
-  right: -8px;
+  right: -7px;
+}
+
+/* A port wired up carries the colour of whatever the node is. */
+.port.linked {
+  background: var(--role);
 }
 
 /* While a link is in flight, every landing port invites the drop. */
 .graph.linking .port.in {
-  background: var(--accent);
-  box-shadow: 0 0 0 5px var(--accent-soft);
-}
-
-.port.out {
-  cursor: crosshair;
-}
-
-.port.linked {
-  background: var(--accent);
+  background: var(--role);
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.08);
 }
 
 .port:hover,
 .port.active {
-  background: var(--accent);
-  transform: scale(1.25);
+  background: var(--role);
+  transform: scale(1.3);
 }
 
 .link-hint {
@@ -702,49 +974,6 @@ input:focus {
   white-space: nowrap;
 }
 
-/* ---------- inspector ---------- */
-
-.inspector {
-  display: flex;
-  flex-direction: column;
-  width: 420px;
-  flex: none;
-  background: var(--bg-panel);
-  border-left: 1px solid var(--border);
-  min-height: 0;
-}
-
-.inspector-head {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.inspector-route {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.inspector-route .arrow {
-  color: var(--accent);
-}
-
-.inspector-route .id {
-  font-family: 'IBM Plex Mono', 'Roboto Mono', ui-monospace, monospace;
-  font-size: 10px;
-  font-weight: 400;
-  color: var(--text-faint);
-}
-
-.tabs {
-  display: flex;
-  gap: 2px;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--border);
-  flex: none;
-}
 
 .tab {
   position: relative;
@@ -781,54 +1010,7 @@ input:focus {
   font-size: 10px;
 }
 
-.panel-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 14px 20px;
-}
 
-.section-label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 4px 0 8px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-/* ---------- mapping rows ---------- */
-
-.map-row {
-  display: grid;
-  grid-template-columns: 1fr 16px 1fr 24px;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 0;
-}
-
-.map-row + .map-row {
-  border-top: 1px solid var(--border);
-}
-
-.map-row .arrow {
-  text-align: center;
-  color: var(--text-faint);
-}
-
-.field-select {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.field-select select {
-  flex: 1;
-  min-width: 0;
-}
 
 .type-chip {
   flex: none;
@@ -849,8 +1031,8 @@ input:focus {
 
 .type-chip.string,
 .type-chip.enum {
-  color: var(--green);
-  background: rgba(59, 165, 93, 0.14);
+  color: var(--live);
+  background: rgba(62, 207, 142, 0.14);
 }
 
 .type-chip.uint,
@@ -876,43 +1058,6 @@ input:focus {
   background: var(--bg-hover);
 }
 
-.add-row {
-  margin-top: 10px;
-  width: 100%;
-  padding: 7px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius);
-  color: var(--text-dim);
-}
-
-.add-row:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.map-row.mismatch .type-chip {
-  outline: 1px solid var(--red);
-}
-
-.warning.error {
-  border-color: rgba(240, 68, 56, 0.35);
-  background: rgba(240, 68, 56, 0.09);
-  color: var(--red);
-}
-
-.warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 12px;
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  border: 1px solid rgba(245, 166, 35, 0.3);
-  background: rgba(245, 166, 35, 0.08);
-  color: var(--amber);
-  font-size: 12px;
-  line-height: 1.45;
-}
 
 .empty {
   padding: 28px 12px;
@@ -922,50 +1067,545 @@ input:focus {
   line-height: 1.6;
 }
 
-/* ---------- subscriptions ---------- */
 
-.subscription {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-card);
-  margin-bottom: 10px;
-  overflow: hidden;
+/* ---------- wiring editor ---------- */
+
+/* A modal over the workspace: the graph keeps its place underneath. */
+.editor-scrim {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(6, 6, 9, 0.62);
+  animation: scrim-in 0.12s ease;
 }
 
-.subscription-head {
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.mapping-editor {
+  display: flex;
+  flex-direction: column;
+  width: min(1120px, 100%);
+  /* Sized by what is being wired, not by the window it floats over. */
+  min-height: 340px;
+  max-height: min(720px, 100%);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-canvas);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  animation: editor-in 0.14s ease;
+}
+
+@keyframes editor-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.editor-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  height: 48px;
+  padding: 0 14px;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-right: auto;
+}
+
+.editor-title .what {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.editor-title .route {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.editor-title .arrow,
+.editor-foot .arrow {
+  color: var(--accent);
+}
+
+.mapped {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mapped.ok {
+  background: rgba(62, 207, 142, 0.14);
+  color: var(--live);
+}
+
+.mapped.short {
+  background: rgba(245, 166, 35, 0.14);
+  color: var(--amber);
+}
+
+/* Tabs inside the wiring editor. */
+.editor-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 0 14px;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-tabs .tab {
+  padding: 10px 10px;
+}
+
+/* The subscription rail, then the two payloads with the wires between them. */
+.editor-body {
+  position: relative;
+  display: flex;
+  gap: 18px;
+  flex: 1;
+  min-height: 0;
+  padding: 16px 20px;
+}
+
+.map-area {
+  display: grid;
+  /* Each payload is as tall as it is; nothing is stretched to fill the popup. */
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 120px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* One row per subscription, beside the wiring it owns. */
+.subscriptions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+  width: 190px;
+  min-height: 0;
+}
+
+.rail-head {
+  padding: 0 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.rail-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+  padding: 8px 24px 8px 9px;
+  border: 1px solid var(--border);
+  border-left: 2px solid transparent;
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.rail-row:hover {
+  background: var(--bg-card);
+}
+
+.rail-row.active {
+  border-color: var(--border-strong);
+  border-left-color: var(--accent);
+  background: var(--bg-card);
+}
+
+.rail-row .line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-row.active .line {
+  color: var(--text);
+}
+
+.rail-row .remove {
+  position: absolute;
+  top: 5px;
+  right: 3px;
+  width: 20px;
+  height: 20px;
+  opacity: 0;
+}
+
+.rail-row:hover .remove,
+.rail-row.active .remove {
+  opacity: 1;
+}
+
+.rail-empty {
+  margin: 0;
+  padding: 8px 2px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.subscriptions .button.subtle {
+  justify-content: center;
+  flex: none;
+  width: 100%;
+  height: 26px;
+  border-style: dashed;
+  font-size: 11px;
+}
+
+.subscriptions .button.subtle:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.map-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+}
+
+.map-pane-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: none;
+  padding: 9px 12px;
+  background: var(--bg-card-head);
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.map-pane-head .who {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.map-pane-head .what {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* On the events tab the payload is chosen where it is shown. */
+.map-pane-pick {
+  position: relative;
+  /* Over the wires, which are drawn above both panes. */
+  z-index: 3;
+  flex: none;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.picker {
+  position: relative;
+}
+
+.picker-value {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 8px 10px;
-  background: var(--bg-card-head);
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 12px;
   text-align: left;
 }
 
-.badge {
-  padding: 2px 6px;
-  border-radius: 3px;
+.picker-value:hover {
+  border-color: #4a4a56;
+}
+
+.picker.open .picker-value {
+  border-color: var(--accent);
+}
+
+.picker-value .picked {
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker .hint {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-faint);
   font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
-.badge.event {
-  color: var(--accent);
+.picker .caret {
+  flex: none;
+  width: 9px;
+  height: 6px;
+  background: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9aa4' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E")
+    no-repeat center / 9px;
+  transition: transform var(--ease);
+}
+
+.picker.open .caret {
+  transform: rotate(180deg);
+}
+
+.picker-list {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 232px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-2);
+}
+
+.picker-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  text-align: left;
+}
+
+.picker-option:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.picker-option.on {
   background: var(--accent-soft);
+  color: var(--text);
 }
 
-.badge.command {
-  color: var(--blue);
-  background: rgba(74, 158, 255, 0.14);
+.picker-option .name {
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.subscription-head .label {
+.picker-option.on::after {
+  content: '✓';
+  flex: none;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.map-json {
+  flex: 1;
+  overflow: auto;
+  padding: 10px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.json-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-dim);
+}
+
+.json-row.branch {
+  color: var(--text-faint);
+}
+
+.json-row:not(.branch):hover {
+  background: var(--bg-hover);
+}
+
+/* A wired field is boxed in the colour of what it carries. */
+.json-row.wired {
+  border-color: color-mix(in srgb, var(--box) 55%, transparent);
+  background: color-mix(in srgb, var(--box) 8%, transparent);
+}
+
+.json-row.wired .key {
+  color: var(--text);
+}
+
+.json-row.picked {
+  border-color: var(--box, var(--accent));
+  background: color-mix(in srgb, var(--box, var(--accent)) 18%, transparent);
+}
+
+.json-row .key {
+  color: var(--text-dim);
+}
+
+.json-row .variants {
+  color: var(--text-faint);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The socket a wire leaves from, or lands on. */
+.socket {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: #33333c;
+  border: 2px solid var(--bg-panel);
+  cursor: crosshair;
+  transition:
+    transform 0.1s ease,
+    background var(--ease);
+}
+
+/* Outside the boxed field, in the pane's gutter, where its wire starts. */
+.socket.source {
+  right: -6px;
+}
+
+.socket.target {
+  left: -6px;
+}
+
+.socket:hover {
+  transform: scale(1.4);
+}
+
+.wires {
+  position: absolute;
+  /* Above both panes: a wire ends inside them, not at their edges. */
+  z-index: 2;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.wire {
+  fill: none;
+  stroke-width: 2;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.wire.picked {
+  stroke: var(--accent) !important;
+  stroke-width: 3;
+}
+
+.wire.pending {
+  stroke: var(--accent);
+  stroke-dasharray: 5 4;
+  pointer-events: none;
+}
+
+.wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+/* Nothing subscribed yet: the panes stand in for the wiring that would be here. */
+.map-area .nothing {
+  grid-column: 1 / -1;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  padding: 40px 0;
+  color: var(--text-faint);
   font-size: 12px;
-  font-weight: 500;
 }
 
-.subscription-body {
-  padding: 8px 10px 10px;
+.editor-foot {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: 40px;
+  padding: 0 16px;
+  background: var(--bg-chrome);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.editor-foot .detail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-foot .mono {
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+.editor-foot .dim {
+  color: var(--text-faint);
+}
+
+.editor-foot .problem {
+  color: var(--amber);
 }

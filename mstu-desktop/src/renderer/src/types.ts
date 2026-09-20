@@ -9,9 +9,28 @@ export type FieldType =
   | 'record'
   | 'list'
 
-export type Field = {
+/// What one enum admits.
+export type Variant = {
   name: string
+  value: string | number | boolean | null
+}
+
+/// A type as the engine describes it, down to what it contains.
+export type TypeInfo = {
   type: FieldType
+
+  /// Width of a number, and whether it is signed.
+  bits?: number
+  signed?: boolean
+
+  /// An enum's variants, a record's fields, a list's element type.
+  variants?: Variant[]
+  fields?: Field[]
+  element?: TypeInfo
+}
+
+export type Field = TypeInfo & {
+  name: string
   description?: string
 }
 
@@ -70,10 +89,13 @@ export type Popup = {
 }
 
 /// One field of the source message copied into one field of the target.
+///
+/// Each side is a path of field indexes: [4] is a top-level field, [4, 1] is
+/// field 1 of the record in field 4.
 export type Mapping = {
   id: string
-  from: number
-  to: number
+  from: number[]
+  to: number[]
 }
 
 export type Subscription = {

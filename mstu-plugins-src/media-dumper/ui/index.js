@@ -6,7 +6,7 @@ export default function mount(plugin) {
   /// The dot lights while the byte count is still moving.
   let written = 0
 
-  plugin.resize(300, 220)
+  plugin.fit(300)
 
   el('dir').addEventListener('change', (event) => plugin.set('output_path', event.target.value))
   el('browse').addEventListener('click', () => plugin.pick('output_path', { kind: 'directory' }))

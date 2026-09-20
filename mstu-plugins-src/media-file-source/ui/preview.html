@@ -21,14 +21,18 @@
       }
 
       .note {
-        padding: 5px 10px;
-        background: var(--bg);
-        color: var(--text-faint);
+        padding: 6px 10px;
+        border-top: 1px solid var(--mstu-border);
+        background: var(--mstu-bg);
+        color: var(--mstu-text-faint);
         font-size: 10px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .note.error {
-        color: var(--red);
+        color: var(--mstu-red);
       }
     </style>
   </head>
