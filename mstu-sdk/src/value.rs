@@ -71,6 +71,24 @@ impl Value {
             data: Data { uint_: 0 },
         }
     }
+
+    #[inline]
+    pub const fn list(values: Slice<Value>) -> Self {
+        Self {
+            kind: ValueKind::ValueList,
+            data: Data { list_: values },
+        }
+    }
+
+    /// A record and a list carry the same slice, so `From` cannot tell them
+    /// apart: a record has to be built by name.
+    #[inline]
+    pub const fn record(fields: Slice<Value>) -> Self {
+        Self {
+            kind: ValueKind::ValueRecord,
+            data: Data { record_: fields },
+        }
+    }
 }
 
 impl FromValue for bool {

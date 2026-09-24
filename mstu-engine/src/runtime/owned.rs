@@ -1,7 +1,7 @@
 use mstu_sdk::{Message, Value, ValueKind};
 
 /// A message value copied out of the ABI so it can outlive the plugin call.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Owned {
     None,
     Bool(bool),

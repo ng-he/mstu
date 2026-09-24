@@ -28,6 +28,7 @@ static METADATA: Metadata = Metadata {
 
 pub struct MediaDumperPlugin {
     id: String,
+    ctx: *const HostContext,
     log: Logger,
     output_dir: String,
     current_filename: String,
@@ -46,6 +47,7 @@ impl MediaDumperPlugin {
         let log = Logger::new(ctx, unsafe { METADATA.name.as_str() }, id.as_str());
 
         Self {
+            ctx,
             log,
             id,
             output_dir: String::new(),
@@ -53,6 +55,29 @@ impl MediaDumperPlugin {
             output: Mutex::new(None),
             chunks: AtomicU64::new(0),
             bytes: AtomicU64::new(0),
+        }
+    }
+
+    /// Pushes what the UI shows; the host keeps the latest.
+    fn publish_live(&self) {
+        let name = match self.output.lock().unwrap().is_some() {
+            true => Str::new(self.current_filename.as_str()),
+            false => Str::from_static(""),
+        };
+
+        let values = [
+            name.into(),
+            self.chunks.load(Ordering::Relaxed).into(),
+            self.bytes.load(Ordering::Relaxed).into(),
+        ];
+
+        unsafe {
+            ((*self.ctx).publish_live)(
+                Str::new(self.id.as_str()),
+                Message {
+                    values: Slice::from_raw_parts(values.as_ptr(), values.len()),
+                },
+            );
         }
     }
 
@@ -124,6 +149,8 @@ impl MediaDumperPlugin {
             );
         }
 
+        self.publish_live();
+
         true
     }
 
@@ -146,6 +173,8 @@ impl MediaDumperPlugin {
             );
         }
 
+        self.publish_live();
+
         true
     }
 
@@ -164,6 +193,9 @@ extern "C" fn create(ctx: *const HostContext, id: Str) -> PluginHandle {
     let plugin = MediaDumperPlugin::new(ctx, id.to_string());
 
     log_info!(plugin.log, "created");
+
+    // So a page opening before anything happens has readings to show.
+    plugin.publish_live();
 
     Box::into_raw(Box::new(plugin)) as PluginHandle
 }
@@ -240,23 +272,6 @@ extern "C" fn live_schema() -> *const Schema {
     &schemas::LIVE_SCHEMA
 }
 
-/// Polled by the host while `process` runs, so the counters are atomics.
-extern "C" fn live(instance: PluginHandle, output: *mut message::Writer) -> bool {
-    let plugin = unsafe { &*(instance as *mut MediaDumperPlugin) };
-    let output = unsafe { &mut *output };
-
-    let name = match plugin.output.lock().unwrap().is_some() {
-        true => Str::new(plugin.current_filename.as_str()),
-        false => Str::from_static(""),
-    };
-
-    (output.set_str)(output, 0, name);
-    (output.set_uint)(output, 1, plugin.chunks.load(Ordering::Relaxed));
-    (output.set_uint)(output, 2, plugin.bytes.load(Ordering::Relaxed));
-
-    true
-}
-
 extern "C" fn events() -> Slice<EventDescriptor> {
     Slice::empty()
 }
@@ -313,7 +328,6 @@ static PLUGIN: PluginDescriptor = PluginDescriptor {
     invoke,
 
     live_schema,
-    live,
 };
 
 #[unsafe(no_mangle)]

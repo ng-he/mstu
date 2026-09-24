@@ -1,0 +1,70 @@
+language = "C"
+
+# Value constructors and the two writer calls, so a C plugin writes a message
+# as a literal array rather than a union by hand.
+trailer = """
+static inline struct Value mstu_none(void) {
+  struct Value v = { ValueNone, { .uint_ = 0 } };
+  return v;
+}
+
+static inline struct Value mstu_bool(bool value) {
+  struct Value v = { ValueBool, { .bool_ = value } };
+  return v;
+}
+
+static inline struct Value mstu_int(int64_t value) {
+  struct Value v = { ValueInt, { .int_ = value } };
+  return v;
+}
+
+static inline struct Value mstu_uint(uint64_t value) {
+  struct Value v = { ValueUint, { .uint_ = value } };
+  return v;
+}
+
+static inline struct Value mstu_float(double value) {
+  struct Value v = { ValueFloat, { .float_ = value } };
+  return v;
+}
+
+static inline struct Value mstu_str(const char *text, uintptr_t len) {
+  struct Value v = { ValueString, { .string_ = { (const uint8_t *)text, len } } };
+  return v;
+}
+
+static inline struct Value mstu_bytes(const uint8_t *ptr, uintptr_t len) {
+  struct Value v = { ValueBytes, { .bytes_ = { ptr, len } } };
+  return v;
+}
+
+static inline struct Value mstu_list(const struct Value *values, uintptr_t len) {
+  struct Value v = { ValueList, { .list_ = { values, len } } };
+  return v;
+}
+
+static inline struct Value mstu_record(const struct Value *fields, uintptr_t len) {
+  struct Value v = { ValueRecord, { .record_ = { fields, len } } };
+  return v;
+}
+
+/// Writes the whole message: one value per field, in order.
+static inline bool mstu_fill(struct Writer *w, const struct Value *values, uintptr_t len) {
+  struct Message message = { { values, len } };
+  return w->fill(w, message);
+}
+
+/// Engine memory for a payload, written in place and never copied.
+static inline uint8_t *mstu_reserve(struct Writer *w, uintptr_t len) {
+  return w->reserve(w, len);
+}
+
+/// Publishes the live values the UI shows: one per field of the live schema.
+static inline void mstu_publish_live(const struct HostContext *ctx,
+                                     struct Str plugin_id,
+                                     const struct Value *values,
+                                     uintptr_t len) {
+  struct Message message = { { values, len } };
+  ctx->publish_live(plugin_id, message);
+}
+"""

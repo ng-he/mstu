@@ -87,21 +87,33 @@ typedef void *PluginHandle;
 
 typedef void (*LogFn)(enum LogLevel level, struct Str target, struct Str message);
 
+typedef struct Message {
+  struct Slice_Value values;
+} Message;
+
+/**
+ * Fills in a message. The engine owns every byte one carries: a plugin
+ * either lets `fill` copy what it has, or writes into `reserve`d memory.
+ */
 typedef struct Writer {
   /**
    * Reserved for engine use.
    * Plugins must never read or modify this field.
    */
   void *_engine_data;
-  bool (*set_none)(struct Writer *w, uintptr_t field);
-  bool (*set_bool)(struct Writer *w, uintptr_t field, bool value);
-  bool (*set_int)(struct Writer *w, uintptr_t field, int64_t value);
-  bool (*set_uint)(struct Writer *w, uintptr_t field, uint64_t value);
-  bool (*set_float)(struct Writer *w, uintptr_t field, double value);
-  bool (*set_str)(struct Writer *w, uintptr_t field, struct Str value);
-  bool (*set_bytes)(struct Writer *w, uintptr_t field, struct Slice_u8 value);
-  bool (*set_record)(struct Writer *w, uintptr_t field, struct Slice_Value value);
-  bool (*set_list)(struct Writer *w, uintptr_t field, struct Slice_Value value);
+  /**
+   * Writes the whole message, one value per field, in order.
+   *
+   * What the values point at is copied in, except memory from `reserve`,
+   * which the message already owns. False if the count is wrong.
+   */
+  bool (*fill)(struct Writer *w, struct Message message);
+  /**
+   * Engine memory for `len` bytes, living as long as the message.
+   *
+   * A value handed to `fill` may point at it, and nothing is copied.
+   */
+  uint8_t *(*reserve)(struct Writer *w, uintptr_t len);
 } Writer;
 
 typedef struct HostContext {
@@ -130,6 +142,14 @@ typedef struct HostContext {
    * resources may be reclaimed afterwards.
    */
   void (*publish_events)(struct Str plugin_id, uintptr_t event);
+  /**
+   * Publishes the plugin's live values, one per field of `live_schema`.
+   *
+   * The host copies what it needs before returning, so the snapshot may
+   * point at anything the plugin owns. The latest one wins, so publishing
+   * often is cheap: the host sends the UI what moved, when it moved.
+   */
+  void (*publish_live)(struct Str plugin_id, struct Message snapshot);
 } HostContext;
 
 typedef struct BoolSchema {
@@ -205,10 +225,6 @@ typedef struct Slice_Field {
 typedef struct Schema {
   struct Slice_Field fields;
 } Schema;
-
-typedef struct Message {
-  struct Slice_Value values;
-} Message;
 
 typedef struct ProcessContext {
   const struct Message *input;
@@ -307,13 +323,11 @@ typedef struct PluginDescriptor {
    */
   bool (*invoke)(PluginHandle handle, uintptr_t command, const struct Message *input);
   /**
-   * Returns the schema of the live snapshot the UI shows, null when there is none.
+   * Returns the schema of the live values the UI shows, null when there are none.
+   *
+   * The plugin pushes them with `HostContext::publish_live`.
    */
   const struct Schema *(*live_schema)(void);
-  /**
-   * Fills the current live values, polled by the host while `process` may be running.
-   */
-  bool (*live)(PluginHandle handle, struct Writer *output);
 } PluginDescriptor;
 
 const struct Value *value_get(struct Slice_Value slice, uintptr_t index);
@@ -330,3 +344,68 @@ void __cbindgen_force_value(struct Value _v);
 extern const struct PluginDescriptor *plugin_descriptor(void);
 
 struct Str str_from_cstr(const char *ptr);
+
+static inline struct Value mstu_none(void) {
+  struct Value v = { ValueNone, { .uint_ = 0 } };
+  return v;
+}
+
+static inline struct Value mstu_bool(bool value) {
+  struct Value v = { ValueBool, { .bool_ = value } };
+  return v;
+}
+
+static inline struct Value mstu_int(int64_t value) {
+  struct Value v = { ValueInt, { .int_ = value } };
+  return v;
+}
+
+static inline struct Value mstu_uint(uint64_t value) {
+  struct Value v = { ValueUint, { .uint_ = value } };
+  return v;
+}
+
+static inline struct Value mstu_float(double value) {
+  struct Value v = { ValueFloat, { .float_ = value } };
+  return v;
+}
+
+static inline struct Value mstu_str(const char *text, uintptr_t len) {
+  struct Value v = { ValueString, { .string_ = { (const uint8_t *)text, len } } };
+  return v;
+}
+
+static inline struct Value mstu_bytes(const uint8_t *ptr, uintptr_t len) {
+  struct Value v = { ValueBytes, { .bytes_ = { ptr, len } } };
+  return v;
+}
+
+static inline struct Value mstu_list(const struct Value *values, uintptr_t len) {
+  struct Value v = { ValueList, { .list_ = { values, len } } };
+  return v;
+}
+
+static inline struct Value mstu_record(const struct Value *fields, uintptr_t len) {
+  struct Value v = { ValueRecord, { .record_ = { fields, len } } };
+  return v;
+}
+
+/// Writes the whole message: one value per field, in order.
+static inline bool mstu_fill(struct Writer *w, const struct Value *values, uintptr_t len) {
+  struct Message message = { { values, len } };
+  return w->fill(w, message);
+}
+
+/// Engine memory for a payload, written in place and never copied.
+static inline uint8_t *mstu_reserve(struct Writer *w, uintptr_t len) {
+  return w->reserve(w, len);
+}
+
+/// Publishes the live values the UI shows: one per field of the live schema.
+static inline void mstu_publish_live(const struct HostContext *ctx,
+                                     struct Str plugin_id,
+                                     const struct Value *values,
+                                     uintptr_t len) {
+  struct Message message = { { values, len } };
+  ctx->publish_live(plugin_id, message);
+}

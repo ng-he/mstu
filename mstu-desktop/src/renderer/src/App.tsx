@@ -110,8 +110,8 @@ function App(): JSX.Element {
   const [running, setRunning] = useState(false)
   const [popups, setPopups] = useState<Popup[]>([])
 
-  /// Plugins whose live values are moving, polled rather than pushed: the
-  /// engine sends 4 snapshots a second and the canvas need not redraw on each.
+  /// Plugins whose live values are moving, read on a timer: the engine sends
+  /// them as they move and the canvas need not redraw on each.
   const [activity, setActivity] = useState<string[]>([])
 
   const hadGraph = useRef(false)

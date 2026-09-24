@@ -8,7 +8,11 @@ fn main() {
     let package_name = env::var("CARGO_PKG_NAME").unwrap();
     let output_file = PathBuf::from(&crate_dir).join(format!("abi/{}.h", package_name));
 
+    // cbindgen.toml carries the C helpers that wrap the awkward calls.
+    let config = cbindgen::Config::from_root_or_default(&crate_dir);
+
     cbindgen::Builder::new()
+        .with_config(config)
         .with_crate(crate_dir)
         .with_documentation(true)
         .with_pragma_once(true)

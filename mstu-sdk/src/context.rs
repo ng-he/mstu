@@ -28,6 +28,13 @@ pub struct HostContext {
     /// Pending events are published as a single batch and their temporary
     /// resources may be reclaimed afterwards.
     pub publish_events: extern "C" fn(plugin_id: Str, event: usize),
+
+    /// Publishes the plugin's live values, one per field of `live_schema`.
+    ///
+    /// The host copies what it needs before returning, so the snapshot may
+    /// point at anything the plugin owns. The latest one wins, so publishing
+    /// often is cheap: the host sends the UI what moved, when it moved.
+    pub publish_live: extern "C" fn(plugin_id: Str, snapshot: Message),
 }
 
 #[repr(C)]

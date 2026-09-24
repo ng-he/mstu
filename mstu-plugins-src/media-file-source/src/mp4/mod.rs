@@ -1,3 +1,5 @@
+use bytes::Bytes;
+
 use std::{
     collections::HashMap,
     fs::{self},
@@ -9,7 +11,7 @@ use std::{
 };
 
 use crate::{
-    file::{self, Sample},
+    file::{self, Sample, SampleInfo},
     media::FourCC,
 };
 use error::Error;
@@ -147,6 +149,34 @@ impl Reader {
             Err(Error::TrakNotFound(track_id))
         }
     }
+
+    pub fn sample_info(&self, track_id: u32, sample_id: u32) -> Result<Option<SampleInfo>> {
+        match self.tracks.get(&track_id) {
+            Some(track) => track.sample_info(sample_id),
+            None => Err(Error::TrakNotFound(track_id)),
+        }
+    }
+
+    pub fn read_sample_into<R: Read + Seek>(
+        &self,
+        reader: &mut R,
+        track_id: u32,
+        sample_id: u32,
+        into: &mut [u8],
+    ) -> Result<()> {
+        match self.tracks.get(&track_id) {
+            Some(track) => track.read_sample_into(reader, sample_id, into),
+            None => Err(Error::TrakNotFound(track_id)),
+        }
+    }
+
+    /// Annex-B is the same size as AVCC only with 4-byte prefixes; anything
+    /// shorter grows, so its sample cannot be read straight into place.
+    pub fn reads_in_place(&self, track_id: u32) -> bool {
+        self.tracks
+            .get(&track_id)
+            .is_some_and(|track| matches!(track.nalu_length_size(), None | Some(4)))
+    }
 }
 
 pub struct File {
@@ -154,6 +184,43 @@ pub struct File {
     reader: Reader,
     video_track_id: u32,
     current_sample_id: u32,
+
+    /// Only for prefixes shorter than 4 bytes, where Annex-B does not fit
+    /// where AVCC was.
+    converted: Option<Bytes>,
+}
+
+impl File {
+    fn peek_converted(&mut self) -> std::result::Result<Option<SampleInfo>, String> {
+        if self.converted.is_none() {
+            let sample = self
+                .reader
+                .read_sample(
+                    &mut self.buf_reader,
+                    self.video_track_id,
+                    self.current_sample_id,
+                )
+                .map_err(|err| err.to_string())?;
+
+            let Some(sample) = sample else {
+                return Ok(None);
+            };
+
+            self.converted = Some(sample.bytes.clone());
+
+            return Ok(Some(SampleInfo {
+                start_time: sample.start_time,
+                duration: sample.duration,
+                rendering_offset: sample.rendering_offset,
+                is_sync: sample.is_sync,
+                size: sample.bytes.len(),
+            }));
+        }
+
+        self.reader
+            .sample_info(self.video_track_id, self.current_sample_id)
+            .map_err(|err| err.to_string())
+    }
 }
 
 pub fn open(path: PathBuf) -> Result<File> {
@@ -176,6 +243,7 @@ pub fn open(path: PathBuf) -> Result<File> {
         reader,
         video_track_id,
         current_sample_id: 1,
+        converted: None,
     })
 }
 
@@ -186,20 +254,38 @@ impl file::SampleReader for File {
             .unwrap()
     }
 
-    fn next_sample(&mut self) -> std::prelude::v1::Result<Option<Sample>, String> {
-        match self.reader.read_sample(
-            &mut self.buf_reader,
-            self.video_track_id,
-            self.current_sample_id,
-        ) {
-            Ok(Some(sample)) => {
-                self.current_sample_id += 1;
-                Ok(Some(sample))
-            }
-
-            Ok(None) => Ok(None),
-            Err(err) => Err(err.to_string()),
+    fn peek_sample(&mut self) -> std::result::Result<Option<SampleInfo>, String> {
+        // Odd prefix lengths grow on the way to Annex-B, so those samples are
+        // converted into a buffer of the reader's own first.
+        if !self.reader.reads_in_place(self.video_track_id) {
+            return self.peek_converted();
         }
+
+        self.reader
+            .sample_info(self.video_track_id, self.current_sample_id)
+            .map_err(|err| err.to_string())
+    }
+
+    fn read_sample(&mut self, into: &mut [u8]) -> std::result::Result<(), String> {
+        if let Some(converted) = self.converted.take() {
+            into.copy_from_slice(&converted);
+            self.current_sample_id += 1;
+
+            return Ok(());
+        }
+
+        self.reader
+            .read_sample_into(
+                &mut self.buf_reader,
+                self.video_track_id,
+                self.current_sample_id,
+                into,
+            )
+            .map_err(|err| err.to_string())?;
+
+        self.current_sample_id += 1;
+
+        Ok(())
     }
 
     fn timescale(&self) -> u32 {
@@ -211,6 +297,7 @@ impl file::SampleReader for File {
     }
 
     fn rewind(&mut self) -> std::result::Result<(), String> {
+        self.converted = None;
         self.current_sample_id = 1;
         Ok(())
     }

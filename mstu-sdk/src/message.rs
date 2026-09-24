@@ -1,6 +1,6 @@
 use std::{ffi::c_void, fmt, write, writeln};
 
-use crate::{Slice, Str, Value};
+use crate::{Slice, Value};
 
 #[repr(C)]
 pub struct Message {
@@ -55,19 +55,46 @@ impl fmt::Debug for Message {
     }
 }
 
+/// Fills in a message. The engine owns every byte one carries: a plugin
+/// either lets `fill` copy what it has, or writes into `reserve`d memory.
 #[repr(C)]
 pub struct Writer {
     /// Reserved for engine use.
     /// Plugins must never read or modify this field.
     pub _engine_data: *mut c_void,
 
-    pub set_none: extern "C" fn(w: *mut Writer, field: usize) -> bool,
-    pub set_bool: extern "C" fn(w: *mut Writer, field: usize, value: bool) -> bool,
-    pub set_int: extern "C" fn(w: *mut Writer, field: usize, value: i64) -> bool,
-    pub set_uint: extern "C" fn(w: *mut Writer, field: usize, value: u64) -> bool,
-    pub set_float: extern "C" fn(w: *mut Writer, field: usize, value: f64) -> bool,
-    pub set_str: extern "C" fn(w: *mut Writer, field: usize, value: Str) -> bool,
-    pub set_bytes: extern "C" fn(w: *mut Writer, field: usize, value: Slice<u8>) -> bool,
-    pub set_record: extern "C" fn(w: *mut Writer, field: usize, value: Slice<Value>) -> bool,
-    pub set_list: extern "C" fn(w: *mut Writer, field: usize, value: Slice<Value>) -> bool,
+    /// Writes the whole message, one value per field, in order.
+    ///
+    /// What the values point at is copied in, except memory from `reserve`,
+    /// which the message already owns. False if the count is wrong.
+    pub fill: extern "C" fn(w: *mut Writer, message: Message) -> bool,
+
+    /// Engine memory for `len` bytes, living as long as the message.
+    ///
+    /// A value handed to `fill` may point at it, and nothing is copied.
+    pub reserve: extern "C" fn(w: *mut Writer, len: usize) -> *mut u8,
+}
+
+impl Writer {
+    /// One value per field, in order.
+    #[inline]
+    pub fn fill(&mut self, values: &[Value]) -> bool {
+        let message = Message {
+            values: Slice::from_raw_parts(values.as_ptr(), values.len()),
+        };
+
+        (self.fill)(self, message)
+    }
+
+    /// Engine memory to write a payload into, with no copy afterwards.
+    #[inline]
+    pub fn reserve(&mut self, len: usize) -> Option<&mut [u8]> {
+        let buffer = (self.reserve)(self, len);
+
+        if buffer.is_null() {
+            return None;
+        }
+
+        Some(unsafe { core::slice::from_raw_parts_mut(buffer, len) })
+    }
 }

@@ -2,6 +2,37 @@ use bytes::Bytes;
 
 pub const START_CODE: [u8; 4] = [0, 0, 0, 1];
 
+/// Rewrites a 4-byte-length-prefixed sample into Annex-B where it lies.
+///
+/// Same size either way, so this needs no buffer of its own. False on a
+/// malformed sample.
+pub fn avcc_to_annexb_in_place(data: &mut [u8]) -> bool {
+    let mut offset = 0;
+
+    while offset < data.len() {
+        let end = offset + START_CODE.len();
+
+        if end > data.len() {
+            return false;
+        }
+
+        let Ok(prefix) = data[offset..end].try_into() else {
+            return false;
+        };
+
+        let size = u32::from_be_bytes(prefix) as usize;
+
+        if end + size > data.len() {
+            return false;
+        }
+
+        data[offset..end].copy_from_slice(&START_CODE);
+        offset = end + size;
+    }
+
+    true
+}
+
 /// Converts AVCC (length prefixed) to Annex-B (start code prefixed).
 ///
 /// `length_size` 4 is rewritten in place, shorter prefixes need a copy.

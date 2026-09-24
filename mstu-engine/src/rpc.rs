@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     env,
     path::PathBuf,
     time::{Duration, Instant},
@@ -21,6 +22,7 @@ use crate::{
     log_debug, log_info, log_trace, log_warn,
     runtime::{
         event::{self, Notice},
+        live,
         mapper::{Mapper, Mapping},
         owned::Owned,
     },
@@ -29,8 +31,20 @@ use crate::{
 /// How often queued pipeline output is routed while the socket is quiet.
 const ROUTE_INTERVAL: Duration = Duration::from_millis(1);
 
-/// How often plugin live snapshots are pushed to the client.
+/// How long routing waits once nothing has come through for a while. The
+/// interval doubles up to this while the pipeline is idle and drops back to
+/// `ROUTE_INTERVAL` the moment a message moves, so a quiet engine stops
+/// waking a core a thousand times a second for nothing.
+const ROUTE_IDLE_MAX: Duration = Duration::from_millis(20);
+
+/// The closest together two live lines may go out. Plugins publish as often
+/// as they like; a source publishing per frame must not become a frame of
+/// socket traffic.
 const LIVE_INTERVAL: Duration = Duration::from_millis(250);
+
+/// However quiet everything is, the whole picture goes out this often: a page
+/// that has just opened should not have to wait for a reading to move.
+const LIVE_REFRESH: Duration = Duration::from_secs(2);
 
 pub fn socket_path() -> PathBuf {
     let dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
@@ -489,6 +503,14 @@ async fn dispatch(app: &mut App, method: &str, params: &Json) -> Result<Json, St
     }
 }
 
+/// Back to full speed as soon as anything moves, slower while nothing does.
+fn backoff(current: Duration, routed: usize) -> Duration {
+    match routed {
+        0 => (current * 2).min(ROUTE_IDLE_MAX),
+        _ => ROUTE_INTERVAL,
+    }
+}
+
 // ---------- serving ----------
 
 /// One JSON object per line, both directions.
@@ -515,11 +537,13 @@ pub async fn serve(mut app: App) -> std::io::Result<()> {
 
     loop {
         // Keep routing while nobody is connected: the pipeline runs regardless.
+        let mut idle = ROUTE_INTERVAL;
+
         let stream = loop {
             tokio::select! {
                 accepted = listener.accept() => break accepted?.0,
-                _ = tokio::time::sleep(ROUTE_INTERVAL) => {
-                    app.route_pending();
+                _ = tokio::time::sleep(idle) => {
+                    idle = backoff(idle, app.route_pending());
                 }
             }
         };
@@ -539,7 +563,20 @@ async fn serve_client(app: &mut App, stream: UnixStream) {
     let (tap, mut notices) = unbounded_channel::<Notice>();
     event::set_tap(Some(tap));
 
-    let mut polled = Instant::now();
+    let (live_tap, mut moves) = unbounded_channel::<()>();
+    live::board().set_tap(Some(live_tap));
+
+    let mut idle = ROUTE_INTERVAL;
+
+    // Due at once: a client that has just connected knows nothing, and every
+    // reading on the board is news to it.
+    let mut polled = Instant::now()
+        .checked_sub(LIVE_INTERVAL)
+        .unwrap_or_else(Instant::now);
+
+    // What this client has already been told, so only news is sent.
+    let mut refreshed = Instant::now();
+    let mut reported: HashMap<String, Vec<Owned>> = HashMap::new();
 
     loop {
         let messages = tokio::select! {
@@ -557,15 +594,26 @@ async fn serve_client(app: &mut App, stream: UnixStream) {
                 None => continue,
             },
 
-            _ = tokio::time::sleep(ROUTE_INTERVAL) => {
-                app.route_pending();
+            // A plugin published: out it goes, unless a line just went out.
+            // The board stays woken, so the beat below picks it up instead.
+            moved = moves.recv() => match moved {
+                Some(()) if polled.elapsed() >= LIVE_INTERVAL => {
+                    polled = Instant::now();
+                    live_news(&mut reported, &mut refreshed)
+                }
+                _ => continue,
+            },
+
+            _ = tokio::time::sleep(idle) => {
+                idle = backoff(idle, app.route_pending());
 
                 if polled.elapsed() < LIVE_INTERVAL {
                     continue;
                 }
 
                 polled = Instant::now();
-                live_json(app)
+
+                live_news(&mut reported, &mut refreshed)
             }
         };
 
@@ -586,7 +634,10 @@ async fn serve_client(app: &mut App, stream: UnixStream) {
     }
 
     event::set_tap(None);
+    live::board().set_tap(None);
+
     drain(&mut notices);
+    drain(&mut moves);
 }
 
 async fn respond(app: &mut App, line: &str) -> Option<Json> {
@@ -615,9 +666,20 @@ async fn respond(app: &mut App, line: &str) -> Option<Json> {
     })
 }
 
-/// One `live` line per plugin that publishes a snapshot.
-fn live_json(app: &App) -> Vec<Json> {
-    app.live_all()
+/// Readings this client has not been told, the whole board on the slow beat:
+/// a page that has just opened should not wait for one to move.
+fn live_news(reported: &mut HashMap<String, Vec<Owned>>, refreshed: &mut Instant) -> Vec<Json> {
+    if refreshed.elapsed() >= LIVE_REFRESH {
+        *refreshed = Instant::now();
+        reported.clear();
+    }
+
+    live_json(live::board().changed(reported))
+}
+
+/// One `live` line per plugin whose readings moved.
+fn live_json(snapshots: Vec<(String, Vec<Owned>)>) -> Vec<Json> {
+    snapshots
         .into_iter()
         .map(|(plugin, values)| {
             json!({
@@ -644,6 +706,6 @@ fn notice_json(notice: &Notice) -> Json {
     })
 }
 
-fn drain(notices: &mut UnboundedReceiver<Notice>) {
-    while notices.try_recv().is_ok() {}
+fn drain<T>(channel: &mut UnboundedReceiver<T>) {
+    while channel.try_recv().is_ok() {}
 }

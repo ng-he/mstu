@@ -59,6 +59,10 @@ export class PluginHost {
 
   /// Last live snapshot per plugin, and when it last differed from the one before.
   private snapshots = new Map<string, string>()
+
+  /// The last readings of each plugin, replayed to a page that opens during a
+  /// quiet spell: the engine only pushes what moved.
+  private readings = new Map<string, unknown[]>()
   private moved = new Map<string, number>()
 
   constructor(hooks: HostHooks) {
@@ -84,6 +88,8 @@ export class PluginHost {
   live(plugin: string, values: unknown[]): void {
     const library = this.hooks.library(plugin)
     const snapshot = JSON.stringify(values)
+
+    this.readings.set(plugin, values)
 
     // A plugin whose readings changed since the last push is doing something.
     if (this.snapshots.get(plugin) !== snapshot) {
@@ -129,6 +135,7 @@ export class PluginHost {
     this.settings.delete(plugin)
     this.popups.delete(plugin)
     this.snapshots.delete(plugin)
+    this.readings.delete(plugin)
     this.moved.delete(plugin)
   }
 
@@ -136,6 +143,7 @@ export class PluginHost {
     this.settings.clear()
     this.popups.clear()
     this.snapshots.clear()
+    this.readings.clear()
     this.moved.clear()
     this.running = false
   }
@@ -226,8 +234,17 @@ export class PluginHost {
         engine.invoke(plugin, command, payload).catch(this.hooks.report)
       },
 
-      /// Live values, pushed by the engine on a timer.
-      onLive: (listener: Listener<Values>) => (page.live.push(listener), api),
+      /// Live values, pushed by the engine whenever a reading moves.
+      onLive: (listener: Listener<Values>) => {
+        page.live.push(listener)
+
+        // Whatever was last heard, so the page is not blank until something
+        // changes.
+        const last = this.readings.get(plugin)
+        if (last) listener(named(this.hooks.library(plugin)?.live ?? null, last))
+
+        return api
+      },
 
       /// One of the plugin's events, by name.
       onEvent: (name: string, listener: Listener<Values>) => {

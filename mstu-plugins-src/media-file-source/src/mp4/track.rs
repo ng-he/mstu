@@ -16,6 +16,7 @@ use mstu_media::{
 };
 
 use crate::media::FourCC;
+use crate::file::SampleInfo;
 use crate::mp4::{
     Result, Sample,
     atom::{self},
@@ -65,7 +66,7 @@ impl Track {
     }
 
     /// NALU length prefix size, None for non h26x tracks.
-    fn nalu_length_size(&self) -> Option<usize> {
+    pub(crate) fn nalu_length_size(&self) -> Option<usize> {
         let stsd = &self.trak.mdia.minf.stbl.stsd;
 
         if let Some(avc1) = &stsd.avc1 {
@@ -500,6 +501,47 @@ impl Track {
         } else {
             true
         }
+    }
+
+    /// What a sample is, straight from the index: no bytes are read.
+    pub fn sample_info(&self, sample_id: u32) -> Result<Option<SampleInfo>> {
+        let size = match self.sample_size(sample_id) {
+            Ok(size) => size,
+            Err(Error::EntryInStblNotFound(_, _, _)) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+
+        let (start_time, duration) = self.sample_time(sample_id)?;
+
+        Ok(Some(SampleInfo {
+            start_time,
+            duration,
+            rendering_offset: self.sample_rendering_offset(sample_id),
+            is_sync: self.is_sync_sample(sample_id),
+            size: size as usize,
+        }))
+    }
+
+    /// Reads a sample straight into `into`, which must be its size.
+    ///
+    /// Only for 4-byte length prefixes, where Annex-B is the same size and is
+    /// rewritten where it lies.
+    pub fn read_sample_into<R: Read + Seek>(
+        &self,
+        reader: &mut R,
+        sample_id: u32,
+        into: &mut [u8],
+    ) -> Result<()> {
+        let sample_offset = self.sample_offset(sample_id)?;
+
+        reader.seek(SeekFrom::Start(sample_offset))?;
+        reader.read_exact(into)?;
+
+        if self.nalu_length_size().is_some() && !nalu::avcc_to_annexb_in_place(into) {
+            return Err(Error::InvalidData("malformed sample"));
+        }
+
+        Ok(())
     }
 
     pub fn read_sample<R: Read + Seek>(

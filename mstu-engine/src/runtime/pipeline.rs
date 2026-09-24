@@ -7,9 +7,9 @@ use std::{
     time::Duration,
 };
 
-use mstu_sdk::{PluginDescriptor, PluginHandle, ProcessContext, Schema, ValueKind};
+use mstu_sdk::{PluginDescriptor, PluginHandle, ProcessContext};
 use tokio::{
-    sync::mpsc::{UnboundedReceiver, UnboundedSender},
+    sync::mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender, error::TrySendError},
     task::JoinHandle,
 };
 
@@ -18,20 +18,18 @@ use crate::{
     runtime::{
         mapper::Mapper,
         process::{self, ProcessData},
-        schema,
+        schema::{self, Shape},
     },
 };
 
 pub type PipelineId = usize;
 pub type NodeId = usize;
 
-/// Number of fields in a schema. A null schema means "no message".
-fn schema_field_count(schema: *const Schema) -> usize {
-    if schema.is_null() {
-        return 0;
-    }
-
-    unsafe { (*schema).fields.len }
+/// Which end of a node a shape belongs to.
+#[derive(Clone, Copy)]
+enum Side {
+    Input,
+    Output,
 }
 
 /// A plugin with no process input is driven by the engine, not by messages.
@@ -42,11 +40,23 @@ fn is_source(descriptor: &PluginDescriptor) -> bool {
 /// How long a source waits before retrying when it is off or has nothing.
 const IDLE_POLL: Duration = Duration::from_millis(5);
 
+/// Messages a node may fall behind by. Bounded on purpose: an unbounded queue
+/// in front of a slow node grows until the machine gives up, and the drop is
+/// better reported than hidden.
+const QUEUE_DEPTH: usize = 64;
+
+/// Messages a node takes off its queue per wake-up, to spread the cost of
+/// being woken over a batch instead of paying it per message.
+const BATCH: usize = 16;
+
 pub struct Node {
     pub id: NodeId,
     pub name: String,
     pub plugin: PluginHandle,
     pub descriptor: &'static PluginDescriptor,
+
+    /// Shape of the message this node writes, worked out once at creation.
+    pub output_shape: Vec<Shape>,
 
     pub running: Arc<AtomicBool>,
 
@@ -64,6 +74,10 @@ unsafe impl Send for Node {}
 pub struct Connector {
     pub to_node_id: NodeId,
     pub mapper: Mapper,
+
+    /// Whether the mapping fills the target's fields with the kinds it wants,
+    /// worked out when the link is made so messages need no checking.
+    pub verified: bool,
 
     /// Drops happen at message rate, so they are counted and reported
     /// sparsely instead of once per message.
@@ -84,14 +98,14 @@ pub struct Worker {
     /// Kept here too: the node itself moves into its task on start.
     pub name: String,
 
-    pub tx: UnboundedSender<ProcessData>,
+    pub tx: Sender<ProcessData>,
 
-    /// Field count of the node process input schema, used to size the
-    /// message a connector maps into.
-    pub input_field_count: usize,
+    /// Shape of the node's input, used both to build the message a connector
+    /// maps into and to check what came out of the mapping.
+    pub input_shape: Vec<Shape>,
 
-    /// Value kinds the node's input schema demands.
-    pub input_kinds: Vec<ValueKind>,
+    /// Shape of what it writes, kept for links made after it started.
+    pub output_shape: Vec<Shape>,
 
     /// Shared with the node task, flipped to switch the node on and off.
     pub running: Arc<AtomicBool>,
@@ -155,6 +169,7 @@ impl Pipeline {
             name: unsafe { (descriptor.metadata)().name.as_str() }.to_string(),
             plugin,
             descriptor,
+            output_shape: schema::shape_of((descriptor.process_output_schema)()),
             running: Arc::new(AtomicBool::new(!is_source(descriptor))),
             alive: Arc::new(AtomicBool::new(true)),
             failures: AtomicUsize::new(0),
@@ -163,6 +178,25 @@ impl Pipeline {
         self.nodes.insert(node_id, node);
 
         node_id
+    }
+
+    /// The shape of a node's input or output, wherever the node is kept.
+    fn shape_of(&self, node_id: NodeId, side: Side) -> Vec<Shape> {
+        if let Some(node) = self.nodes.get(&node_id) {
+            return match side {
+                Side::Input => schema::shape_of((node.descriptor.process_input_schema)()),
+                Side::Output => node.output_shape.clone(),
+            };
+        }
+
+        let Some(worker) = self.workers.get(&node_id) else {
+            return Vec::new();
+        };
+
+        match side {
+            Side::Input => worker.input_shape.clone(),
+            Side::Output => worker.output_shape.clone(),
+        }
     }
 
     /// A node is in `nodes` until it starts and in `workers` after.
@@ -177,6 +211,12 @@ impl Pipeline {
             return false;
         }
 
+        // Both shapes are known here, so whether a mapped message can be
+        // trusted is known here too, once instead of per message.
+        let source_shape = self.shape_of(from_node_id, Side::Output);
+        let target_shape = self.shape_of(to_node_id, Side::Input);
+        let verified = mapper.covers(&source_shape, &target_shape);
+
         let connectors = self.connectors.entry(from_node_id).or_default();
 
         // Connecting the same pair again replaces its mapping, and the new one
@@ -187,11 +227,13 @@ impl Pipeline {
         {
             Some(connector) => {
                 connector.mapper = mapper;
+                connector.verified = verified;
                 connector.dropped.store(0, Ordering::Relaxed);
             }
             None => connectors.push(Connector {
                 to_node_id,
                 mapper,
+                verified,
                 dropped: AtomicUsize::new(0),
             }),
         }
@@ -269,7 +311,7 @@ impl Pipeline {
     pub fn start_node(&mut self, node_id: NodeId) {
         let node = self.nodes.remove(&node_id).expect("node not found");
         let output_tx = self.output_tx.clone();
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ProcessData>();
+        let (tx, rx) = tokio::sync::mpsc::channel::<ProcessData>(QUEUE_DEPTH);
 
         log_debug!(
             "pipeline {}: node {node_id} '{}' spawned as {}",
@@ -287,8 +329,8 @@ impl Pipeline {
             plugin: node.plugin,
             name: node.name.clone(),
             tx,
-            input_field_count: schema_field_count((node.descriptor.process_input_schema)()),
-            input_kinds: schema::expected_kinds((node.descriptor.process_input_schema)()),
+            input_shape: schema::shape_of((node.descriptor.process_input_schema)()),
+            output_shape: node.output_shape.clone(),
             running: node.running.clone(),
             alive: node.alive.clone(),
             is_source: is_source(node.descriptor),
@@ -376,32 +418,47 @@ impl Pipeline {
     }
 
     /// Every other node processes what arrives on its channel.
+    ///
+    /// Taken in batches: one wake-up, one look at the flags, then a run of
+    /// messages through code and data that are already in cache.
     async fn run_worker(
         node: Node,
-        mut rx: UnboundedReceiver<ProcessData>,
+        mut rx: Receiver<ProcessData>,
         output_tx: UnboundedSender<Output>,
     ) {
-        while let Some(input) = rx.recv().await {
+        let mut batch = Vec::with_capacity(BATCH);
+
+        while rx.recv_many(&mut batch, BATCH).await > 0 {
             if !node.alive.load(Ordering::Relaxed) {
                 break;
             }
 
             // Messages that arrive while the node is off are dropped.
             if !node.running.load(Ordering::Relaxed) {
+                batch.clear();
                 continue;
             }
 
-            let Some(data) = Self::process_node(&node, input) else {
-                continue;
-            };
+            let mut closed = false;
 
-            if output_tx
-                .send(Output {
-                    node_id: node.id,
-                    data,
-                })
-                .is_err()
-            {
+            for input in batch.drain(..) {
+                let Some(data) = Self::process_node(&node, input) else {
+                    continue;
+                };
+
+                if output_tx
+                    .send(Output {
+                        node_id: node.id,
+                        data,
+                    })
+                    .is_err()
+                {
+                    closed = true;
+                    break;
+                }
+            }
+
+            if closed {
                 break;
             }
         }
@@ -457,8 +514,7 @@ impl Pipeline {
     fn process_node(node: &Node, input: ProcessData) -> Option<ProcessData> {
         // The engine owns every allocation: the output message is created here,
         // and the plugin only fills it through the writer.
-        let mut data =
-            ProcessData::new(schema_field_count((node.descriptor.process_output_schema)()));
+        let mut data = ProcessData::from_shape(&node.output_shape);
 
         let mut writer = process::new_writer();
         writer._engine_data = (&mut data as *mut ProcessData).cast();
@@ -489,6 +545,23 @@ impl Pipeline {
             return None;
         }
 
+        // Checked here, once, rather than at every link it is routed down: a
+        // plugin that writes the wrong kind is caught where it wrote it.
+        if !schema::matches(&data.output, &node.output_shape) {
+            let failures = node.failures.fetch_add(1, Ordering::Relaxed) + 1;
+
+            if failures == 1 || failures % 1000 == 0 {
+                log_warn!(
+                    "node {} '{}' wrote {:?}, which is not its output schema ({failures} time(s))",
+                    node.id,
+                    node.name,
+                    data.output
+                );
+            }
+
+            return None;
+        }
+
         log_trace!("node {} '{}' -> {:?}", node.id, node.name, data.output);
 
         Some(data)
@@ -513,46 +586,51 @@ impl Pipeline {
             return;
         };
 
+        let node_id = output.node_id;
+
+        // Shared, not copied: every target points at these values, and the
+        // last one to finish with them lets the memory go.
+        let source = Arc::new(output.data);
+
         for connector in connectors {
             // An unmapped connector carries nothing, and a target reading a
             // field the mapper never wrote is how plugins get killed.
             if connector.mapper.is_empty() {
-                self.note_drop(connector, output.node_id, "nothing is mapped");
+                self.note_drop(connector, node_id, "nothing is mapped");
                 continue;
             }
 
             let Some(worker) = self.workers.get(&connector.to_node_id) else {
-                self.note_drop(connector, output.node_id, "target has no worker");
+                self.note_drop(connector, node_id, "target has no worker");
                 continue;
             };
 
             /*
              * Mapper:
              *
-             * source output
-             *      │
-             *      ▼
-             * connector.mapper
-             *      │
-             *      ▼
-             * target ProcessData
+             * source output ──┐ (values, not copies)
+             *                 ▼
+             *         connector.mapper
+             *                 │
+             *                 ▼
+             *      target ProcessData ── keeps the source alive
              */
 
-            let mut data = ProcessData::new(worker.input_field_count);
+            let mut data = ProcessData::from_shape(&worker.input_shape);
 
-            if !connector
-                .mapper
-                .map(&output.data.output, &mut data.output, &mut data.arena)
-            {
-                self.note_drop(connector, output.node_id, "mapping points at no such field");
+            if !connector.mapper.share(&source.output, &mut data.output) {
+                self.note_drop(connector, node_id, "mapping points at no such field");
                 continue;
             }
 
+            data.borrows_from(source.clone());
+
             // A mapping that writes the wrong type would crash the target.
-            if !schema::matches(&data.output, &worker.input_kinds) {
+            // Settled when the link was made, unless it maps into a record.
+            if !connector.verified && !schema::matches(&data.output, &worker.input_shape) {
                 self.note_drop(
                     connector,
-                    output.node_id,
+                    node_id,
                     &format!("{:?} does not match the input schema", data.output),
                 );
 
@@ -562,12 +640,16 @@ impl Pipeline {
             log_trace!(
                 "pipeline {}: routed {} -> {} '{}'",
                 self.id,
-                output.node_id,
+                node_id,
                 worker.node_id,
                 worker.name
             );
 
-            let _ = worker.tx.send(data);
+            // The queue is bounded, so a node that cannot keep up drops the
+            // message here instead of growing a backlog nobody can see.
+            if let Err(TrySendError::Full(_)) = worker.tx.try_send(data) {
+                self.note_drop(connector, node_id, "target is behind");
+            }
         }
     }
 
@@ -606,6 +688,8 @@ impl Pipeline {
             return false;
         };
 
-        worker.tx.send(data).is_ok()
+        // Never waits: a full queue means the node is behind, and blocking the
+        // caller on it would stall the engine rather than the node.
+        worker.tx.try_send(data).is_ok()
     }
 }

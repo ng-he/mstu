@@ -13,10 +13,10 @@ use crate::{
     log_info, log_warn, logging,
     runtime::{
         event::{self, Subscription},
+        live,
         mapper::Mapper,
-        owned::{Owned, own_message},
         pipeline::{NodeId, Pipeline, PipelineId},
-        process::{self, ProcessData},
+        process::ProcessData,
         schema,
     },
     utils::generate_plugin_id,
@@ -66,6 +66,7 @@ impl App {
                 log_enabled: logging::enabled,
                 new_event: event::new_event,
                 publish_events: event::publish_events,
+                publish_live: live::publish_live,
             }),
 
             descriptors: HashMap::new(),
@@ -128,9 +129,13 @@ impl App {
             .filter(|path| path.is_dir());
 
         let id = generate_plugin_id();
-        let handle = (descriptor.create)(&*self.ctx, Str::new(id.as_str()));
 
+        // Both are open before the plugin exists, so it may publish from
+        // `create` onwards.
         event::manager().register(&id, descriptor);
+        live::board().register(&id, schema::shape_of((descriptor.live_schema)()));
+
+        let handle = (descriptor.create)(&*self.ctx, Str::new(id.as_str()));
 
         match &ui {
             Some(path) => log_info!("created plugin '{id}' from '{library}', ui {}", path.display()),
@@ -179,6 +184,9 @@ impl App {
         // Nothing runs this plugin now, so the handle is free to release.
         event::manager().forget(plugin_id, handle);
         (descriptor.release)(handle);
+
+        // After releasing: a plugin may report a last reading on its way out.
+        live::board().forget(plugin_id);
         self.plugins.remove(plugin_id);
 
         log_info!("removed plugin '{plugin_id}'");
@@ -230,35 +238,6 @@ impl App {
         }
 
         Ok(())
-    }
-
-    /// Reads one plugin's live snapshot, `None` when it publishes none.
-    pub fn live(&self, plugin_id: &str) -> Option<Vec<Owned>> {
-        let plugin = self.plugins.get(plugin_id)?;
-        let schema = (plugin.descriptor.live_schema)();
-
-        if schema.is_null() {
-            return None;
-        }
-
-        // The engine owns the message here too, the plugin only fills it.
-        let mut data = ProcessData::new(unsafe { (*schema).fields.len });
-        let mut writer = process::new_writer();
-        writer._engine_data = (&mut data as *mut ProcessData).cast();
-
-        if !(plugin.descriptor.live)(plugin.handle, &mut writer) {
-            return None;
-        }
-
-        Some(own_message(&data.output))
-    }
-
-    /// Snapshots every plugin that publishes live values.
-    pub fn live_all(&self) -> Vec<(String, Vec<Owned>)> {
-        self.plugins
-            .keys()
-            .filter_map(|id| Some((id.clone(), self.live(id)?)))
-            .collect()
     }
 
     /// Invokes `command` on `to` whenever `from` publishes `event`.

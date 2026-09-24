@@ -5,7 +5,7 @@ use std::{
 };
 
 use mstu_sdk::{
-    EventDescriptor, Message, PluginDescriptor, PluginHandle, Slice, Str, ValueKind, message,
+    EventDescriptor, Message, PluginDescriptor, PluginHandle, Slice, Str, message,
 };
 
 use tokio::sync::mpsc::UnboundedSender;
@@ -16,7 +16,7 @@ use crate::{
         mapper::Mapper,
         owned::{Owned, own_message},
         process::{self, ProcessData},
-        schema,
+        schema::{self, Shape},
     },
 };
 
@@ -50,11 +50,8 @@ pub struct Subscription {
     pub plugin: PluginHandle,
     pub descriptor: &'static PluginDescriptor,
 
-    /// Field count of the command payload schema.
-    pub input_field_count: usize,
-
-    /// Value kinds the command payload demands.
-    pub input_kinds: Vec<ValueKind>,
+    /// Shape of the command payload, to build it and to check it.
+    pub payload_shape: Vec<Shape>,
 }
 
 impl Subscription {
@@ -67,18 +64,12 @@ impl Subscription {
         let commands = (descriptor.commands)();
         let payload = commands.get(command).map(|command| command.schema);
 
-        let input_field_count = payload.map(|schema| schema.fields.len).unwrap_or(0);
-        let input_kinds = payload
-            .map(|schema| schema::expected_kinds(schema))
-            .unwrap_or_default();
-
         Self {
             mapper,
             command,
             plugin,
             descriptor,
-            input_field_count,
-            input_kinds,
+            payload_shape: payload.map(|schema| schema::shape_of(schema)).unwrap_or_default(),
         }
     }
 
@@ -86,17 +77,17 @@ impl Subscription {
     pub fn invoke(&self, event: &Message) -> bool {
         // Unmapped, so every field would arrive as none. A command that reads
         // its payload cannot survive that.
-        if self.mapper.is_empty() && self.input_field_count > 0 {
+        if self.mapper.is_empty() && !self.payload_shape.is_empty() {
             log_warn!(
                 "command {} skipped: it takes {} field(s) and nothing is mapped",
                 self.command,
-                self.input_field_count
+                self.payload_shape.len()
             );
 
             return false;
         }
 
-        let mut data = ProcessData::new(self.input_field_count);
+        let mut data = ProcessData::from_shape(&self.payload_shape);
 
         if !self.mapper.map(event, &mut data.output, &mut data.arena) {
             log_warn!(
@@ -108,7 +99,7 @@ impl Subscription {
         }
 
         // A payload that does not match the command schema would crash it.
-        if !schema::matches(&data.output, &self.input_kinds) {
+        if !schema::matches(&data.output, &self.payload_shape) {
             log_warn!(
                 "command {} skipped: {} does not match its payload schema",
                 self.command,
@@ -127,6 +118,9 @@ impl Subscription {
 pub struct Channel {
     pub events: Slice<EventDescriptor>,
     pub queue: Vec<Box<PendingEvent>>,
+
+    /// Payload shape per event, indexed like `events`.
+    pub shapes: Vec<Vec<Shape>>,
 
     /// Subscriptions per event, indexed like `events`.
     pub subscriptions: Vec<Vec<Subscription>>,
@@ -150,11 +144,17 @@ impl Manager {
         let events = (descriptor.events)();
         let subscriptions = (0..events.len).map(|_| Vec::new()).collect();
 
+        let shapes = unsafe { events.as_slice() }
+            .iter()
+            .map(|event| schema::shape_of(event.schema))
+            .collect();
+
         self.channels.insert(
             plugin_id.to_string(),
             Channel {
                 events,
                 queue: Vec::new(),
+                shapes,
                 subscriptions,
             },
         );
@@ -266,13 +266,13 @@ impl Manager {
             return ptr::null();
         };
 
-        let Some(descriptor) = channel.events.get(event) else {
+        let Some(shape) = channel.shapes.get(event) else {
             return ptr::null();
         };
 
         let mut pending = Box::new(PendingEvent {
             event,
-            data: ProcessData::new(descriptor.schema.fields.len),
+            data: ProcessData::from_shape(shape),
             writer: process::new_writer(),
         });
 

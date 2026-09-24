@@ -53,9 +53,6 @@ pub struct MediaFileSourcePlugin {
     /// Wall clock and media time that pacing is measured from.
     anchor: Option<Instant>,
     anchor_time: u64,
-
-    /// Read but not yet due, held back until its turn comes.
-    pending: Option<Sample>,
 }
 
 /// Pacing resolution is bounded by the engine's idle poll, so a sample this
@@ -80,7 +77,25 @@ impl MediaFileSourcePlugin {
             looping: false,
             anchor: None,
             anchor_time: 0,
-            pending: None,
+        }
+    }
+
+    /// Pushes what the UI shows; the host keeps the latest.
+    fn publish_live(&self) {
+        let values = [
+            self.samples.load(Ordering::Relaxed).into(),
+            self.ended.load(Ordering::Relaxed).into(),
+            self.position.load(Ordering::Relaxed).into(),
+            self.duration.load(Ordering::Relaxed).into(),
+        ];
+
+        unsafe {
+            ((*self.ctx).publish_live)(
+                Str::new(self.id.as_str()),
+                Message {
+                    values: Slice::from_raw_parts(values.as_ptr(), values.len()),
+                },
+            );
         }
     }
 
@@ -125,10 +140,10 @@ impl MediaFileSourcePlugin {
             return;
         }
 
-        self.pending = None;
         self.ended.store(false, Ordering::Relaxed);
         self.position.store(micros, Ordering::Relaxed);
         self.anchor_at(time);
+        self.publish_live();
 
         log_info!(self.log, "seeked to {micros} us");
     }
@@ -139,7 +154,6 @@ impl MediaFileSourcePlugin {
         self.ended.store(false, Ordering::Relaxed);
         self.position.store(0, Ordering::Relaxed);
         self.anchor = None;
-        self.pending = None;
 
         if path.extension().and_then(|s| s.to_str()) == Some("mp4") {
             match mp4::open(path) {
@@ -207,14 +221,25 @@ impl MediaFileSourcePlugin {
             let event_writer =
                 &mut *(((*self.ctx).new_event)(Str::new(self.id.as_str()), 0) as *mut Writer);
 
-            (event_writer.set_str)(event_writer, 0, Str::new(self.filename.as_str()));
-            (event_writer.set_str)(event_writer, 1, codec);
-            (event_writer.set_bytes)(event_writer, 2, Slice::from(extras.as_slice()));
+            let values = [
+                Str::new(self.filename.as_str()).into(),
+                codec.into(),
+                Slice::from(extras.as_slice()).into(),
+            ];
+
+            (event_writer.fill)(
+                event_writer,
+                Message {
+                    values: Slice::from_raw_parts(values.as_ptr(), values.len()),
+                },
+            );
 
             ((*self.ctx).publish_events)(Str::new(self.id.as_str()), 0);
         }
 
         log_info!(self.log, "published file.changed for '{}'", self.filename);
+
+        self.publish_live();
 
         true
     }
@@ -222,17 +247,13 @@ impl MediaFileSourcePlugin {
     fn process(&mut self, output: &mut message::Writer) -> Result<(), String> {
         // A source with no file yet produces nothing, it is not an error: the
         // worker asks again every few milliseconds until one is set.
-        let Some(sample_reader) = self.sample_reader.as_mut() else {
+        let Some(reader) = self.sample_reader.as_mut() else {
             return Ok(());
         };
 
-        // A sample read last round that was not due yet.
-        let sample = match self.pending.take() {
-            Some(sample) => sample,
-            None => match sample_reader.next_sample()? {
-                Some(sample) => sample,
-                None => return self.finish(),
-            },
+        // Described before it is read, so nothing is read before it is due.
+        let Some(sample) = reader.peek_sample()? else {
+            return self.finish();
         };
 
         // Hold the sample back until its place in the timeline comes round.
@@ -245,7 +266,6 @@ impl MediaFileSourcePlugin {
                 let now = Instant::now();
 
                 if now < due {
-                    self.pending = Some(sample);
                     return Ok(());
                 }
 
@@ -257,21 +277,43 @@ impl MediaFileSourcePlugin {
             }
         }
 
+        // Read straight into the message: the plugin never holds the payload.
+        let payload = (output.reserve)(output, sample.size);
+
+        if payload.is_null() {
+            return Err("the message would not take the sample".to_string());
+        }
+
+        let Some(reader) = self.sample_reader.as_mut() else {
+            return Ok(());
+        };
+
+        reader.read_sample(unsafe { std::slice::from_raw_parts_mut(payload, sample.size) })?;
+
+        let bytes = Slice::from_raw_parts(payload, sample.size);
         let samples = self.samples.fetch_add(1, Ordering::Relaxed) + 1;
+
         self.position
             .store(self.micros(sample.start_time), Ordering::Relaxed);
 
         log_trace!(self.log, "sample {samples}: {sample}");
 
-        (output.set_uint)(output, 0, sample.start_time);
-        (output.set_uint)(output, 1, sample.duration as u64);
-        (output.set_int)(output, 2, sample.rendering_offset as i64);
-        (output.set_bool)(output, 3, sample.is_sync);
-        (output.set_bytes)(
+        let values = [
+            sample.start_time.into(),
+            (sample.duration as u64).into(),
+            (sample.rendering_offset as i64).into(),
+            sample.is_sync.into(),
+            bytes.into(),
+        ];
+
+        (output.fill)(
             output,
-            4,
-            Slice::from_raw_parts(sample.bytes.as_ptr(), sample.bytes.len()),
+            Message {
+                values: Slice::from_raw_parts(values.as_ptr(), values.len()),
+            },
         );
+
+        self.publish_live();
 
         Ok(())
     }
@@ -285,6 +327,7 @@ impl MediaFileSourcePlugin {
 
             self.anchor = None;
             self.position.store(0, Ordering::Relaxed);
+            self.publish_live();
 
             log_debug!(self.log, "looping '{}'", self.filename);
 
@@ -309,6 +352,8 @@ impl MediaFileSourcePlugin {
             }
 
             log_info!(self.log, "published file.ended");
+
+            self.publish_live();
         }
 
         Ok(())
@@ -323,6 +368,9 @@ extern "C" fn create(ctx: *const HostContext, id: Str) -> PluginHandle {
     let plugin = MediaFileSourcePlugin::new(ctx, id.to_string());
 
     log_info!(plugin.log, "created");
+
+    // So a page opening before anything happens has readings to show.
+    plugin.publish_live();
 
     Box::into_raw(Box::new(plugin)) as PluginHandle
 }
@@ -421,19 +469,6 @@ extern "C" fn live_schema() -> *const Schema {
     &schemas::LIVE_SCHEMA
 }
 
-/// Polled by the host while `process` runs, so it only reads atomics.
-extern "C" fn live(instance: PluginHandle, output: *mut message::Writer) -> bool {
-    let plugin = unsafe { &*(instance as *mut MediaFileSourcePlugin) };
-    let output = unsafe { &mut *output };
-
-    (output.set_uint)(output, 0, plugin.samples.load(Ordering::Relaxed));
-    (output.set_bool)(output, 1, plugin.ended.load(Ordering::Relaxed));
-    (output.set_uint)(output, 2, plugin.position.load(Ordering::Relaxed));
-    (output.set_uint)(output, 3, plugin.duration.load(Ordering::Relaxed));
-
-    true
-}
-
 extern "C" fn events() -> Slice<EventDescriptor> {
     slice!(schemas::EVENTS)
 }
@@ -468,7 +503,6 @@ static PLUGIN: PluginDescriptor = PluginDescriptor {
     invoke,
 
     live_schema,
-    live,
 };
 
 #[unsafe(no_mangle)]
