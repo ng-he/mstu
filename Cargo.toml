@@ -1,9 +1,0 @@
-[workspace]
-resolver = "2"
-
-members = [
-    "mstu-engine",
-    "mstu-media",
-    "mstu-sdk",
-    "mstu-plugins-src/*",
-]

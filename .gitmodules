@@ -1,0 +1,27 @@
+[submodule "mstu-sdk"]
+	path = mstu-sdk
+	url = https://github.com/ng-he/mstu-sdk.git
+[submodule "mstu-media"]
+	path = mstu-media
+	url = https://github.com/ng-he/mstu-media.git
+[submodule "mstu-engine"]
+	path = mstu-engine
+	url = https://github.com/ng-he/mstu-engine.git
+[submodule "mstu-desktop"]
+	path = mstu-desktop
+	url = https://github.com/ng-he/mstu-desktop.git
+[submodule "plugins-src/mstu-media-file-source"]
+	path = plugins-src/mstu-media-file-source
+	url = https://github.com/ng-he/mstu-media-file-source.git
+[submodule "plugins-src/mstu-media-dumper"]
+	path = plugins-src/mstu-media-dumper
+	url = https://github.com/ng-he/mstu-media-dumper.git
+[submodule "plugins-src/mstu-rtsp-source"]
+	path = plugins-src/mstu-rtsp-source
+	url = https://github.com/ng-he/mstu-rtsp-source.git
+[submodule "plugins-src/mstu-transcoder"]
+	path = plugins-src/mstu-transcoder
+	url = https://github.com/ng-he/mstu-transcoder.git
+[submodule "plugins-src/mstu-rtp-packetizer"]
+	path = plugins-src/mstu-rtp-packetizer
+	url = https://github.com/ng-he/mstu-rtp-packetizer.git
