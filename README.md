@@ -17,7 +17,7 @@ git clone --recurse-submodules https://github.com/ng-he/mstu.git
 | [mstu-sdk](https://github.com/ng-he/mstu-sdk) | The ABI plugins are written against. Published to crates.io, with a C header for everyone else. |
 | [mstu-media](https://github.com/ng-he/mstu-media) | Media helpers plugins share: codecs, four-character codes, NAL units. Published to crates.io. |
 | [mstu-engine](https://github.com/ng-he/mstu-engine) | Loads plugins, runs the pipeline, serves the desktop over a unix socket. |
-| [mstu-desktop](https://github.com/ng-he/mstu-desktop) | The Electron and React app. |
+| [mstu-desktop](https://github.com/ng-he/mstu-desktop) | The Electron and React app, and the UI SDK a plugin's own page is written against. |
 | `plugins-src/*` | One repository per plugin. |
 
 ## Building
