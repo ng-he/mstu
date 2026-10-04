@@ -103,13 +103,15 @@ impl Esds {
         let end = start + size;
         while current < end {
             let (desc_tag, desc_size) = read_desc(reader)?;
-            match desc_tag {
-                0x03 => {
-                    es_desc = Some(EsDescriptor::read(reader, desc_size)?);
-                }
-                _ => break,
+            let next = reader.stream_position()? + desc_size as u64;
+
+            if desc_tag == 0x03 {
+                es_desc = Some(EsDescriptor::read(reader, desc_size)?);
             }
-            current = reader.stream_position()?;
+
+            // Whatever was read of it, the next descriptor starts here.
+            atom::read_skip_bytes_to(reader, next)?;
+            current = next;
         }
 
         if es_desc.is_none() {
@@ -131,7 +133,9 @@ pub struct EsDescriptor {
     pub es_id: u16,
 
     pub dec_config: DecoderConfigDescriptor,
-    pub sl_config: SlConfigDescriptor,
+
+    /// Carries nothing this reader uses, and plenty of files leave it out.
+    pub sl_config: Option<SlConfigDescriptor>,
 }
 
 impl EsDescriptor {
@@ -139,7 +143,21 @@ impl EsDescriptor {
         let start = reader.stream_position()?;
 
         let es_id = reader.read_u16::<BigEndian>()?;
-        reader.read_u8()?; // XXX flags must be 0
+        let flags = reader.read_u8()?;
+
+        // What the flags announce comes before the descriptors do.
+        if flags & 0x80 != 0 {
+            reader.read_u16::<BigEndian>()?; // depends on another stream
+        }
+
+        if flags & 0x40 != 0 {
+            let length = reader.read_u8()?;
+            atom::read_skip_bytes(reader, length as u64)?; // url
+        }
+
+        if flags & 0x20 != 0 {
+            reader.read_u16::<BigEndian>()?; // clock reference stream
+        }
 
         let mut dec_config = None;
         let mut sl_config = None;
@@ -148,6 +166,8 @@ impl EsDescriptor {
         let end = start + size as u64;
         while current < end {
             let (desc_tag, desc_size) = read_desc(reader)?;
+            let next = reader.stream_position()? + desc_size as u64;
+
             match desc_tag {
                 0x04 => {
                     dec_config = Some(DecoderConfigDescriptor::read(reader, desc_size)?);
@@ -155,25 +175,21 @@ impl EsDescriptor {
                 0x06 => {
                     sl_config = Some(SlConfigDescriptor::read(reader, desc_size)?);
                 }
-                _ => {
-                    atom::read_skip_bytes(reader, desc_size as u64)?;
-                }
+                _ => {}
             }
-            current = reader.stream_position()?;
+
+            atom::read_skip_bytes_to(reader, next)?;
+            current = next;
         }
 
         if dec_config.is_none() {
             return Err(Error::InvalidData("decoder config descriptor not found"));
         }
 
-        if sl_config.is_none() {
-            return Err(Error::InvalidData("sl config descriptor not found"));
-        }
-
         Ok(EsDescriptor {
             es_id,
             dec_config: dec_config.unwrap(),
-            sl_config: sl_config.unwrap(),
+            sl_config,
         })
     }
 }
@@ -208,15 +224,16 @@ impl DecoderConfigDescriptor {
         let end = start + size as u64;
         while current < end {
             let (desc_tag, desc_size) = read_desc(reader)?;
-            match desc_tag {
-                0x05 => {
-                    dec_specific = Some(DecoderSpecificDescriptor::read(reader, desc_size)?);
-                }
-                _ => {
-                    atom::read_skip_bytes(reader, desc_size as u64)?;
-                }
+            let next = reader.stream_position()? + desc_size as u64;
+
+            if desc_tag == 0x05 {
+                dec_specific = Some(DecoderSpecificDescriptor::read(reader, desc_size)?);
             }
-            current = reader.stream_position()?;
+
+            // The audio config is read for its first bytes only, so the rest
+            // of it is stepped over rather than taken for a descriptor.
+            atom::read_skip_bytes_to(reader, next)?;
+            current = next;
         }
 
         if dec_specific.is_none() {
@@ -303,6 +320,54 @@ impl SlConfigDescriptor {
         reader.read_u8()?; // pre-defined
 
         Ok(SlConfigDescriptor {})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Cursor, Seek, SeekFrom};
+
+    use super::*;
+
+    /// An esds as a real encoder writes one: five bytes of audio config, of
+    /// which the reader wants two, then the sl config behind them.
+    const ESDS: &[u8] = &[
+        0x00, 0x00, 0x00, 0x36, 0x65, 0x73, 0x64, 0x73, // box header
+        0x00, 0x00, 0x00, 0x00, // version and flags
+        0x03, 0x80, 0x80, 0x80, 0x25, 0x00, 0x02, 0x00, // es descriptor
+        0x04, 0x80, 0x80, 0x80, 0x17, 0x40, 0x15, 0x00, 0x00, 0x00, 0x00, 0x01, 0xee, 0x4d, 0x00,
+        0x01, 0xee, 0x4d, // decoder config
+        0x05, 0x80, 0x80, 0x80, 0x05, 0x12, 0x10, 0x56, 0xe5, 0x00, // audio config
+        0x06, 0x80, 0x80, 0x80, 0x01, 0x02, // sl config
+    ];
+
+    fn read(bytes: &[u8]) -> Result<Esds> {
+        let mut reader = Cursor::new(bytes);
+        reader.seek(SeekFrom::Start(8)).unwrap();
+
+        Esds::read(&mut reader, bytes.len() as u64)
+    }
+
+    #[test]
+    fn steps_over_the_rest_of_an_audio_config_to_reach_the_sl_config() {
+        let esds = read(ESDS).unwrap();
+
+        assert_eq!(esds.es_desc.es_id, 2);
+        assert_eq!(esds.es_desc.dec_config.dec_specific.profile, 2);
+        assert!(esds.es_desc.sl_config.is_some());
+    }
+
+    #[test]
+    fn takes_a_stream_that_declares_no_sl_config() {
+        let mut bytes = ESDS[..ESDS.len() - 6].to_vec();
+
+        bytes[3] -= 6; // the box
+        bytes[16] -= 6; // the es descriptor in it
+
+        let esds = read(&bytes).unwrap();
+
+        assert_eq!(esds.es_desc.es_id, 2);
+        assert!(esds.es_desc.sl_config.is_none());
     }
 }
 

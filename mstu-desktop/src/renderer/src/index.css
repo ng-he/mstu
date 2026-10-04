@@ -1470,7 +1470,6 @@ input:focus {
   align-items: center;
   gap: 6px;
   padding: 3px 8px;
-  border: 1px solid transparent;
   border-radius: var(--radius);
   color: var(--text-dim);
 }
@@ -1483,22 +1482,60 @@ input:focus {
   background: var(--bg-hover);
 }
 
-/* A wired field is boxed in the colour of what it carries. */
-.json-row.wired {
+/* A wired field is boxed in the colour of what it carries, description and all. */
+.json-field {
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+.json-field.wired {
   border-color: color-mix(in srgb, var(--box) 55%, transparent);
   background: color-mix(in srgb, var(--box) 8%, transparent);
 }
 
-.json-row.wired .key {
+.json-field.wired .key {
   color: var(--text);
 }
 
-.json-row.picked {
+.json-field.picked {
   border-color: var(--box, var(--accent));
   background: color-mix(in srgb, var(--box, var(--accent)) 18%, transparent);
 }
 
 .json-row .key {
+  color: var(--text-dim);
+}
+
+/* What a field is for, under it rather than in a tooltip nobody hovers. */
+.json-note {
+  padding: 0 14px 4px 0;
+  margin-top: -1px;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inside the box it belongs to the wire, so it reads a shade stronger. */
+.json-field.wired .json-note {
+  color: var(--text-dim);
+}
+
+/* Only a line that is cut off is worth clicking. */
+.json-note.clip,
+.json-note.open {
+  cursor: pointer;
+}
+
+.json-note.clip:hover {
+  color: var(--text-dim);
+}
+
+.json-note.open {
+  white-space: normal;
   color: var(--text-dim);
 }
 

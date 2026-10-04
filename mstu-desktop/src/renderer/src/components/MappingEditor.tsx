@@ -75,6 +75,9 @@ function MappingEditor(props: Props): JSX.Element {
 
   /// The right-click menu, on the mapping it was opened over.
   const [menu, setMenu] = useState<{ key: string; x: number; y: number } | null>(null)
+
+  /// Descriptions clicked open, which then read in full over several lines.
+  const [opened, setOpened] = useState<Set<string>>(new Set())
   const menuBox = useRef<HTMLDivElement>(null)
 
   /// The subscription the events tab is wiring, defaulting to the first one.
@@ -158,7 +161,8 @@ function MappingEditor(props: Props): JSX.Element {
     setWires((current) => (JSON.stringify(current) === JSON.stringify(drawn) ? current : drawn))
   }, [filled, socketAt, targetLeaves])
 
-  useLayoutEffect(redraw, [redraw])
+  // A description opening pushes the rows below it down, wires included.
+  useLayoutEffect(redraw, [redraw, opened])
 
   useEffect(() => {
     setPicked(null)
@@ -272,6 +276,34 @@ function MappingEditor(props: Props): JSX.Element {
       ? filled.has(pathKey(path))
       : [...filled.values()].some((item) => pathKey(item) === pathKey(path))
 
+  /// What the field is for, under it. One line until it is clicked open.
+  function note(field: Field, key: string, depth: number): JSX.Element[] {
+    if (!field.description) return []
+
+    const open = opened.has(key)
+
+    return [
+      <div
+        className={`json-note ${open ? 'open' : ''}`}
+        key={`${key}-note`}
+        style={{ paddingLeft: `${depth * 12 + 10}px` }}
+        // Only a clipped line is worth clicking, so only that one says so.
+        ref={(element) =>
+          element?.classList.toggle('clip', !open && element.scrollWidth > element.clientWidth)
+        }
+        onClick={() =>
+          setOpened((current) => {
+            const next = new Set(current)
+            next.has(key) ? next.delete(key) : next.add(key)
+            return next
+          })
+        }
+      >
+        {field.description}
+      </div>
+    ]
+  }
+
   /// One line of the payload, which is either a record opening or a field.
   function rows(side: Side, fields: Field[], path: number[] = [], depth = 1): JSX.Element[] {
     return fields.flatMap((field, index) => {
@@ -280,13 +312,18 @@ function MappingEditor(props: Props): JSX.Element {
 
       if (nested(field)) {
         return [
-          <div className="json-row branch" key={pathKey(here)} style={indent}>
-            <span className="key">&quot;{field.name}&quot;</span>
-            <span className="punct">: {'{'}</span>
+          <div className="json-field" key={pathKey(here)}>
+            <div className="json-row branch" style={indent}>
+              <span className="key">&quot;{field.name}&quot;</span>
+              <span className="punct">: {'{'}</span>
+            </div>
+            {note(field, pathKey(here), depth)}
           </div>,
           ...rows(side, field.fields ?? [], here, depth + 1),
-          <div className="json-row branch" key={`${pathKey(here)}-end`} style={indent}>
-            <span className="punct">{'},'}</span>
+          <div className="json-field" key={`${pathKey(here)}-end`}>
+            <div className="json-row branch" style={indent}>
+              <span className="punct">{'},'}</span>
+            </div>
           </div>
         ]
       }
@@ -294,45 +331,54 @@ function MappingEditor(props: Props): JSX.Element {
       const on = wired(side, here)
 
       return [
+        // A wired field is boxed in the colour of what it carries, and the
+        // box holds what the field is for as well as the field.
         <div
-          className={`json-row ${on ? 'wired' : ''} ${
+          className={`json-field ${on ? 'wired' : ''} ${
             side === 'target' && picked === pathKey(here) ? 'picked' : ''
           }`}
           key={pathKey(here)}
-          // A wired field is boxed in the colour of what it carries.
-          style={{ ...indent, ['--box' as string]: on ? colourOf(field.type) : undefined }}
-          data-side={side}
-          data-path={pathKey(here)}
-          title={field.description || field.name}
-          onClick={() => side === 'target' && setPicked(pathKey(here))}
-          onContextMenu={(event) => side === 'target' && on && openMenu(event, pathKey(here))}
+          style={{ ['--box' as string]: on ? colourOf(field.type) : undefined }}
         >
-          <span className="key">&quot;{field.name}&quot;</span>
-          <span className="punct">:</span>
-          <span className={`type-chip ${field.type}`}>{typeLabel(field)}</span>
+          <div
+            className="json-row"
+            style={indent}
+            data-side={side}
+            data-path={pathKey(here)}
+            onClick={() => side === 'target' && setPicked(pathKey(here))}
+            onContextMenu={(event) => side === 'target' && on && openMenu(event, pathKey(here))}
+          >
+            <span className="key">&quot;{field.name}&quot;</span>
+            <span className="punct">:</span>
+            <span className={`type-chip ${field.type}`}>{typeLabel(field)}</span>
 
-          {field.variants && (
-            <span className="variants">{field.variants.map((item) => item.name).join(' | ')}</span>
-          )}
+            {field.variants && (
+              <span className="variants">
+                {field.variants.map((item) => item.name).join(' | ')}
+              </span>
+            )}
 
-          <span
-            className={`socket ${side}`}
-            style={{ background: on ? colourOf(field.type) : undefined }}
-            onPointerDown={(event) => {
-              event.stopPropagation()
-              event.preventDefault()
-              surface.current?.setPointerCapture(event.pointerId)
-              setDrag({
-                side,
-                path: here,
-                at: { x: event.clientX, y: event.clientY }
-              })
-            }}
-            ref={(element) => {
-              if (element) sockets.current.set(id(side, here), element)
-              else sockets.current.delete(id(side, here))
-            }}
-          />
+            <span
+              className={`socket ${side}`}
+              style={{ background: on ? colourOf(field.type) : undefined }}
+              onPointerDown={(event) => {
+                event.stopPropagation()
+                event.preventDefault()
+                surface.current?.setPointerCapture(event.pointerId)
+                setDrag({
+                  side,
+                  path: here,
+                  at: { x: event.clientX, y: event.clientY }
+                })
+              }}
+              ref={(element) => {
+                if (element) sockets.current.set(id(side, here), element)
+                else sockets.current.delete(id(side, here))
+              }}
+            />
+          </div>
+
+          {note(field, pathKey(here), depth)}
         </div>
       ]
     })

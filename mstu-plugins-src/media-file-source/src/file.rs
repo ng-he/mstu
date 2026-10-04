@@ -54,6 +54,7 @@ pub trait SampleReader {
     /// `size` bytes, and moves on to the next one.
     fn read_sample(&mut self, into: &mut [u8]) -> Result<(), String>;
 
+    /// Codec
     fn codec(&self) -> mstu_media::Codec;
 
     /// Units per second that sample times are counted in.
