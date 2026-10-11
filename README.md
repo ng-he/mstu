@@ -19,6 +19,7 @@ git clone --recurse-submodules https://github.com/ng-he/mstu.git
 | [mstu-engine](https://github.com/ng-he/mstu-engine) | Loads plugins, runs the pipeline, serves the desktop over a unix socket. |
 | [mstu-desktop](https://github.com/ng-he/mstu-desktop) | The Electron and React app, and the UI SDK a plugin's own page is written against. |
 | `plugins-src/*` | One repository per plugin. |
+| `integration/` | The parts tested together, against a running engine. |
 
 ## Building
 
@@ -44,6 +45,26 @@ Inside this checkout, `.cargo/config.toml` points `mstu-sdk` and `mstu-media` at
 the submodules, so a change to the SDK is picked up by the engine and the
 plugins without publishing anything. A repository cloned on its own builds
 against the published crates instead.
+
+## Testing
+
+```sh
+./test.sh           # every part on its own, then the parts together
+./test.sh --unit    # only the parts, needing neither an engine nor media
+```
+
+The parts written here are tested with cargo. A plugin is tested by its own
+`test.sh`, the same way it is built by its own `build.sh`, so a plugin written
+in another language tests itself however suits it; all the suite asks of it is
+an exit status.
+
+The ones in [integration/](integration) start a real engine, wire real plugins
+through it and check what comes out the other end; they need the engine built
+and the plugins collected, which `./test.sh` does first.
+
+Media comes from `plugins-src/mstu-media-file-source/test_samples`, a handful of
+short clips committed beside the plugin that reads them, so nothing has to be
+encoded to run the tests. The script that made them is in that folder.
 
 ## Working across repositories
 
