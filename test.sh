@@ -8,6 +8,8 @@
 # The parts written here are tested with cargo. A plugin is tested by its own
 # test.sh, since it may be written in a language cargo knows nothing about;
 # all this asks of it is an exit status.
+#
+# Formatting counts as a failure: ./fmt.sh puts it right.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -32,6 +34,8 @@ run() {
 
     failed+=("$name")
 }
+
+run "formatting" ./fmt.sh --check
 
 for part in mstu-sdk mstu-media mstu-engine; do
     [ -f "$part/Cargo.toml" ] || continue

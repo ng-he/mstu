@@ -4,6 +4,7 @@
 //! the libraries in `plugins/`, and everything is said over the socket the
 //! desktop app uses.
 
+use core::panic;
 use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
@@ -32,7 +33,12 @@ pub fn center() -> PathBuf {
 fn engine_binary() -> PathBuf {
     let built = ["release", "debug"]
         .iter()
-        .map(|profile| center().join("mstu-engine/target").join(profile).join("mstu-engine"))
+        .map(|profile| {
+            center()
+                .join("mstu-engine/target")
+                .join(profile)
+                .join("mstu-engine")
+        })
         .find(|path| path.is_file());
 
     built.unwrap_or_else(|| {
@@ -48,7 +54,11 @@ fn plugin_dir() -> PathBuf {
 
     let collected = dir
         .read_dir()
-        .map(|entries| entries.flatten().any(|e| e.path().extension().is_some_and(|x| x == "so")))
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|e| e.path().extension().is_some_and(|x| x == "so"))
+        })
         .unwrap_or(false);
 
     assert!(
@@ -183,7 +193,10 @@ impl Client {
                 return Ok(message["result"].clone());
             }
 
-            return Err(message["error"].as_str().unwrap_or("no reason given").to_string());
+            return Err(message["error"]
+                .as_str()
+                .unwrap_or("no reason given")
+                .to_string());
         }
     }
 
@@ -249,7 +262,10 @@ impl Client {
     }
 
     pub fn node(&mut self, pipeline: u64, plugin: &str) -> u64 {
-        self.call("add_node", json!({ "pipeline": pipeline, "plugin": plugin }))["node"]
+        self.call(
+            "add_node",
+            json!({ "pipeline": pipeline, "plugin": plugin }),
+        )["node"]
             .as_u64()
             .expect("a node id")
     }
@@ -261,7 +277,14 @@ impl Client {
         );
     }
 
-    pub fn connect_nodes(&mut self, pipeline: u64, from: u64, to: u64, from_field: u64, to_field: u64) {
+    pub fn connect_nodes(
+        &mut self,
+        pipeline: u64,
+        from: u64,
+        to: u64,
+        from_field: u64,
+        to_field: u64,
+    ) {
         self.call(
             "connect",
             json!({
@@ -296,7 +319,10 @@ impl Client {
 
     /// Closes the dumper's current file.
     pub fn finish(&mut self, dumper: &str) {
-        self.call("invoke", json!({ "plugin": dumper, "command": 1, "payload": [] }));
+        self.call(
+            "invoke",
+            json!({ "plugin": dumper, "command": 1, "payload": [] }),
+        );
         std::thread::sleep(Duration::from_millis(300));
     }
 }

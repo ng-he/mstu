@@ -21,11 +21,16 @@ its own schedule.
 ## After every change
 
 ```sh
+./fmt.sh             # format every part written in Rust
 ./test.sh            # every part, then the parts together
 ./test.sh --unit     # only the parts, when nothing needs the engine
 ```
 
-It needs nothing installed beyond cargo. Run it before saying a change works.
+They need nothing installed beyond cargo. Run them before saying a change
+works. **Formatting is not optional**: `./test.sh` runs `./fmt.sh --check`
+first and counts unformatted code as a failure, and so does each plugin's own
+`test.sh`. Default rustfmt, no `rustfmt.toml` anywhere — don't hand-format
+around it.
 
 A change to a plugin only reaches the engine once it is rebuilt and collected,
 which `./test.sh` does, or `./collect.sh --build` on its own. **A stale `.so`

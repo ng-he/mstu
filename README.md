@@ -51,7 +51,13 @@ against the published crates instead.
 ```sh
 ./test.sh           # every part on its own, then the parts together
 ./test.sh --unit    # only the parts, needing neither an engine nor media
+./fmt.sh            # format every part written in Rust
 ```
+
+Unformatted code fails the suite, so `./fmt.sh` is the first thing to reach for
+if `./test.sh` complains about formatting. It is plain rustfmt with no
+configuration; a plugin in another language formats itself, with a `fmt.sh` of
+its own if it wants the centre to call it.
 
 The parts written here are tested with cargo. A plugin is tested by its own
 `test.sh`, the same way it is built by its own `build.sh`, so a plugin written
