@@ -46,6 +46,18 @@ the submodules, so a change to the SDK is picked up by the engine and the
 plugins without publishing anything. A repository cloned on its own builds
 against the published crates instead.
 
+### Linux, macOS, Windows
+
+The engine serves a unix socket where there are unix sockets and a named pipe on
+Windows, and the desktop app connects to whichever its platform has; `MSTU_SOCKET`
+names another one, for a second engine beside a real one. Plugin libraries are
+`.so`, `.dylib` or `.dll` as the platform has it, with or without the `lib` in
+front, and are collected and loaded by that name.
+
+The scripts here are bash. Windows runs them under the Git Bash that comes with
+Git for Windows; a plugin written for Windows alone may ship a `build.ps1` of its
+own, as long as `build.sh` and `test.sh` are what the centre can call.
+
 ## Testing
 
 ```sh

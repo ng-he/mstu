@@ -52,9 +52,30 @@ for plugin in plugins-src/*/; do
         # No script of its own, but cargo knows what to do with it.
         run "$name" cargo test --manifest-path "$plugin/Cargo.toml"
     else
-        skipped+=("$name")
+        skipped+=("$name: it has neither test.sh nor a cargo manifest")
     fi
 done
+
+WINDOWS=x86_64-pc-windows-msvc
+
+# Nothing here is run on Windows, so compiling for it is the one thing that
+# catches a unix assumption. Skipped unless the target is installed:
+#
+#   rustup target add x86_64-pc-windows-msvc
+windows() {
+    for part in mstu-sdk mstu-media mstu-engine integration plugins-src/*/; do
+        [ -f "$part/Cargo.toml" ] || continue
+
+        cargo check --quiet --target "$WINDOWS" --all-targets \
+            --manifest-path "$part/Cargo.toml" || return 1
+    done
+}
+
+if rustup target list --installed 2>/dev/null | grep -q "^$WINDOWS$"; then
+    run "the windows build" windows
+else
+    skipped+=("the windows build: rustup target add $WINDOWS")
+fi
 
 if ! $only_unit; then
     # The integration tests need the engine built and the plugins collected.
@@ -65,8 +86,8 @@ fi
 
 echo
 
-for name in "${skipped[@]:-}"; do
-    [ -n "$name" ] && echo "no tests for $name: it has neither test.sh nor a cargo manifest"
+for note in "${skipped[@]:-}"; do
+    [ -n "$note" ] && echo "skipped $note"
 done
 
 if [ ${#failed[@]} -eq 0 ]; then

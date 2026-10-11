@@ -46,9 +46,24 @@ npm --prefix mstu-desktop run dev
 
 The engine does nothing without `--serve`. It reads plugins from
 `MSTU_PLUGIN_DIR`, or the nearest `plugins` folder from the working directory
-upwards. Its socket is `$XDG_RUNTIME_DIR/mstu.sock`, so a second engine can be
-run beside a real one by pointing `XDG_RUNTIME_DIR` somewhere else — which is
-how the integration tests stay out of the way.
+upwards. It listens on `MSTU_SOCKET`, or `$XDG_RUNTIME_DIR/mstu.sock`, or
+`\\.\pipe\mstu` on Windows; a second engine runs beside a real one by being
+given a name of its own, which is how the integration tests stay out of the way.
+
+## More than one platform
+
+Nothing may assume Linux. `mstu-engine/src/ipc.rs` is where the unix socket and
+the Windows named pipe part company, with the same split on the client side in
+`integration/src/channel.rs`; above those two files the protocol is the same.
+A library is `std::env::consts::DLL_EXTENSION` and may or may not carry `lib` in
+front of it, so never spell `.so` out. Scripts are bash, run under Git Bash on
+Windows.
+
+Nothing here is run on Windows, so the check that catches a mistake is:
+
+```sh
+cargo check --target x86_64-pc-windows-msvc --all-targets --manifest-path <part>/Cargo.toml
+```
 
 ## How the parts fit
 

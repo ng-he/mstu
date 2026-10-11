@@ -1,13 +1,12 @@
 //! Drives a real engine with the plugins that were collected beside it.
 //!
 //! Nothing here is mocked: the engine runs as its own process, the plugins are
-//! the libraries in `plugins/`, and everything is said over the socket the
+//! the libraries in `plugins/`, and everything is said over the channel the
 //! desktop app uses.
 
+pub mod channel;
+
 use core::panic;
-use std::io::{BufRead, BufReader, Write};
-use std::net::Shutdown;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -15,10 +14,12 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use channel::Channel;
+
 /// How long to wait for the engine to answer before calling it hung.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How long to wait for the socket to appear after starting the engine.
+/// How long to wait for the engine to start answering at all.
 const START_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The repository this test lives in.
@@ -31,13 +32,15 @@ pub fn center() -> PathBuf {
 
 /// The engine binary, release for preference since that is what is collected.
 fn engine_binary() -> PathBuf {
+    let name = format!("mstu-engine{}", std::env::consts::EXE_SUFFIX);
+
     let built = ["release", "debug"]
         .iter()
         .map(|profile| {
             center()
                 .join("mstu-engine/target")
                 .join(profile)
-                .join("mstu-engine")
+                .join(&name)
         })
         .find(|path| path.is_file());
 
@@ -52,12 +55,14 @@ fn engine_binary() -> PathBuf {
 fn plugin_dir() -> PathBuf {
     let dir = center().join("plugins");
 
+    let library = std::env::consts::DLL_EXTENSION;
+
     let collected = dir
         .read_dir()
         .map(|entries| {
             entries
                 .flatten()
-                .any(|e| e.path().extension().is_some_and(|x| x == "so"))
+                .any(|e| e.path().extension().is_some_and(|x| x == library))
         })
         .unwrap_or(false);
 
@@ -85,21 +90,21 @@ pub fn scratch(name: &str) -> PathBuf {
     path
 }
 
-/// An engine of its own: its own socket, its own run.
+/// An engine of its own: its own channel, its own run.
 pub struct Engine {
     child: Child,
     runtime: PathBuf,
-    pub socket: PathBuf,
+    pub address: String,
 }
 
 impl Engine {
     pub fn start(name: &str) -> Self {
         let runtime = scratch(name);
-        let socket = runtime.join("mstu.sock");
+        let address = channel::address(&runtime);
 
         let child = Command::new(engine_binary())
             .arg("--serve")
-            .env("XDG_RUNTIME_DIR", &runtime)
+            .env("MSTU_SOCKET", &address)
             .env("MSTU_PLUGIN_DIR", plugin_dir())
             .env("MSTU_LOG", "warn")
             .stdout(Stdio::null())
@@ -107,27 +112,19 @@ impl Engine {
             .spawn()
             .expect("the engine to start");
 
-        let since = Instant::now();
-
-        while !socket.exists() {
-            assert!(
-                since.elapsed() < START_TIMEOUT,
-                "the engine never opened {}",
-                socket.display()
-            );
-
-            std::thread::sleep(Duration::from_millis(50));
+        if let Err(error) = channel::wait_until_served(&address, START_TIMEOUT) {
+            panic!("the engine never answered on {address}: {error}");
         }
 
         Self {
             child,
             runtime,
-            socket,
+            address,
         }
     }
 
     pub fn connect(&self) -> Client {
-        Client::connect(&self.socket)
+        Client::connect(&self.address)
     }
 }
 
@@ -141,8 +138,7 @@ impl Drop for Engine {
 
 /// A client of the engine, speaking the line protocol the desktop speaks.
 pub struct Client {
-    stream: UnixStream,
-    lines: BufReader<UnixStream>,
+    channel: Channel,
     next_id: u64,
 
     /// Everything the engine pushed while answers were being waited for.
@@ -150,17 +146,11 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn connect(socket: &Path) -> Self {
-        let stream = UnixStream::connect(socket).expect("the engine to be listening");
-        stream
-            .set_read_timeout(Some(REPLY_TIMEOUT))
-            .expect("a timeout rather than a hang");
-
-        let lines = BufReader::new(stream.try_clone().expect("a second handle"));
+    pub fn connect(address: &str) -> Self {
+        let channel = Channel::try_connect(address).expect("the engine to be listening");
 
         Self {
-            stream,
-            lines,
+            channel,
             next_id: 0,
             pushed: Vec::new(),
         }
@@ -179,10 +169,10 @@ impl Client {
 
         let request = json!({ "id": id, "method": method, "params": params });
 
-        writeln!(self.stream, "{request}").map_err(|error| error.to_string())?;
+        self.channel.send(&request.to_string())?;
 
         loop {
-            let message = self.read()?;
+            let message = self.read(REPLY_TIMEOUT)?;
 
             if message.get("id").and_then(Value::as_u64) != Some(id) {
                 self.pushed.push(message);
@@ -200,14 +190,10 @@ impl Client {
         }
     }
 
-    fn read(&mut self) -> Result<Value, String> {
-        let mut line = String::new();
+    fn read(&mut self, within: Duration) -> Result<Value, String> {
+        let line = self.channel.line(within)?;
 
-        match self.lines.read_line(&mut line) {
-            Ok(0) => Err("the engine closed the connection".to_string()),
-            Ok(_) => serde_json::from_str(&line).map_err(|error| format!("{error}: {line}")),
-            Err(error) => Err(format!("nothing came back: {error}")),
-        }
+        serde_json::from_str(&line).map_err(|error| format!("{error}: {line}"))
     }
 
     /// Everything pushed since the last look, waiting out the given time so
@@ -215,26 +201,14 @@ impl Client {
     pub fn pushes(&mut self, within: Duration) -> Vec<Value> {
         let deadline = Instant::now() + within;
 
-        self.stream
-            .set_read_timeout(Some(Duration::from_millis(120)))
-            .expect("a short timeout");
-
         while Instant::now() < deadline {
-            match self.read() {
+            match self.read(Duration::from_millis(120)) {
                 Ok(message) => self.pushed.push(message),
                 Err(_) => continue,
             }
         }
 
-        self.stream
-            .set_read_timeout(Some(REPLY_TIMEOUT))
-            .expect("the usual timeout");
-
         std::mem::take(&mut self.pushed)
-    }
-
-    pub fn shutdown(&self) {
-        let _ = self.stream.shutdown(Shutdown::Both);
     }
 }
 

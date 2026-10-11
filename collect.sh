@@ -30,18 +30,21 @@ for dir in "$SRC"/*/; do
         "$dir/build.sh"
     fi
 
-    # The library, named as the plugin is but with underscores.
-    lib="lib${name//-/_}"
+    # The library, named as the plugin is but with underscores. Everything
+    # but Windows puts `lib` in front of it.
+    lib="${name//-/_}"
     taken=false
 
     for place in "$dir/dist" "$dir/target/release"; do
-        for ext in so dll dylib; do
-            if [ -f "$place/$lib.$ext" ]; then
-                cp "$place/$lib.$ext" "$DEST/"
-                echo "    $lib.$ext"
-                taken=true
-                break 2
-            fi
+        for stem in "lib$lib" "$lib"; do
+            for ext in so dll dylib; do
+                if [ -f "$place/$stem.$ext" ]; then
+                    cp "$place/$stem.$ext" "$DEST/"
+                    echo "    $stem.$ext"
+                    taken=true
+                    break 3
+                fi
+            done
         done
     done
 
