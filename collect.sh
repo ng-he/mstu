@@ -11,7 +11,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 SRC="$ROOT/plugins-src"
-DEST="${MSTU_PLUGIN_DIR:-$ROOT/plugins}"
+DEST="${MSTU_PLUGIN_DIR:-$ROOT/build/plugins}"
 
 build=false
 [ "${1:-}" = "--build" ] && build=true
