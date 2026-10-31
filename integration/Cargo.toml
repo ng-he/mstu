@@ -1,0 +1,9 @@
+[package]
+name = "mstu-integration"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Drives a real engine with the collected plugins, over its own socket."
+
+[dependencies]
+serde_json = "1"

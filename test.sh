@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Runs every test in the project: each part on its own, then the parts
+# together.
+#
+#   ./test.sh           everything
+#   ./test.sh --unit    only the parts, needing neither an engine nor plugins
+#
+# The parts written here are tested with cargo. A plugin is tested by its own
+# test.sh, since it may be written in a language cargo knows nothing about;
+# all this asks of it is an exit status.
+#
+# Formatting counts as a failure: ./fmt.sh puts it right.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+
+only_unit=false
+[ "${1:-}" = "--unit" ] && only_unit=true
+
+failed=()
+skipped=()
+
+run() {
+    local name="$1"
+    shift
+
+    echo
+    echo "==> $name"
+
+    if "$@"; then
+        return 0
+    fi
+
+    failed+=("$name")
+}
+
+run "formatting" ./fmt.sh --check
+
+for part in mstu-sdk mstu-media mstu-engine; do
+    [ -f "$part/Cargo.toml" ] || continue
+
+    run "$part" cargo test --manifest-path "$part/Cargo.toml"
+done
+
+for plugin in plugins-src/*/; do
+    name="$(basename "$plugin")"
+
+    if [ -x "$plugin/test.sh" ]; then
+        run "$name" "$plugin/test.sh"
+    elif [ -f "$plugin/Cargo.toml" ]; then
+        # No script of its own, but cargo knows what to do with it.
+        run "$name" cargo test --manifest-path "$plugin/Cargo.toml"
+    else
+        skipped+=("$name: it has neither test.sh nor a cargo manifest")
+    fi
+done
+
+WINDOWS=x86_64-pc-windows-msvc
+
+# Nothing here is run on Windows, so compiling for it is the one thing that
+# catches a unix assumption. Skipped unless the target is installed:
+#
+#   rustup target add x86_64-pc-windows-msvc
+windows() {
+    for part in mstu-sdk mstu-media mstu-engine integration plugins-src/*/; do
+        [ -f "$part/Cargo.toml" ] || continue
+
+        # A part that builds against system libraries can only be checked for
+        # a target this machine has those libraries for, and says so itself.
+        if [ -f "$part/.no-windows-check" ]; then
+            echo "    skipped $(basename "$part"): $(head -1 "$part/.no-windows-check")"
+            continue
+        fi
+
+        cargo check --quiet --target "$WINDOWS" --all-targets \
+            --manifest-path "$part/Cargo.toml" || return 1
+    done
+}
+
+if rustup target list --installed 2>/dev/null | grep -q "^$WINDOWS$"; then
+    run "the windows build" windows
+else
+    skipped+=("the windows build: rustup target add $WINDOWS")
+fi
+
+if ! $only_unit; then
+    # The integration tests need the engine built and the plugins collected.
+    run "building the engine" cargo build --release --manifest-path mstu-engine/Cargo.toml
+    run "collecting plugins" ./collect.sh --build
+    run "integration" cargo test --manifest-path integration/Cargo.toml
+fi
+
+echo
+
+for note in "${skipped[@]:-}"; do
+    [ -n "$note" ] && echo "skipped $note"
+done
+
+if [ ${#failed[@]} -eq 0 ]; then
+    echo "all green"
+    exit 0
+fi
+
+echo "failed: ${failed[*]}"
+exit 1

@@ -1,0 +1,7 @@
+# Inside this checkout the submodules stand in for the published crates, so
+# the engine and the Rust plugins build against what is here rather than what
+# is on crates.io. A repository cloned on its own ignores this and uses the
+# published versions.
+[patch.crates-io]
+mstu-sdk = { path = "mstu-sdk" }
+mstu-media = { path = "mstu-media" }

@@ -1,0 +1,8 @@
+/target
+/plugins
+/build
+/.vscode
+tasks.txt
+
+# Each part builds into its own, including the tests here.
+target/
