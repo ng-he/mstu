@@ -33,7 +33,7 @@ for dir in "$SRC"/*/; do
     # The library, named as the plugin is but with underscores. Everything
     # but Windows puts `lib` in front of it.
     lib="${name//-/_}"
-    taken=false
+    taken=
 
     for place in "$dir/dist" "$dir/target/release"; do
         for stem in "lib$lib" "$lib"; do
@@ -41,17 +41,28 @@ for dir in "$SRC"/*/; do
                 if [ -f "$place/$stem.$ext" ]; then
                     cp "$place/$stem.$ext" "$DEST/"
                     echo "    $stem.$ext"
-                    taken=true
+                    taken="$stem.$ext"
                     break 3
                 fi
             done
         done
     done
 
-    if ! $taken; then
+    if [ -z "$taken" ]; then
         echo "    $name: nothing built yet" >&2
         continue
     fi
+
+    # A plugin may need libraries the engine does not, and on Windows there is
+    # nowhere to install those, so it brings them in dist/ and they travel
+    # beside it: the engine puts the plugin's own folder on the search path.
+    for extra in "$dir"/dist/*.dll "$dir"/dist/*.dylib "$dir"/dist/*.so*; do
+        [ -f "$extra" ] || continue
+        [ "$(basename "$extra")" != "$taken" ] || continue
+
+        cp "$extra" "$DEST/"
+        echo "    $(basename "$extra") (beside it)"
+    done
 
     # ui() returns a folder name resolved next to the library.
     for place in "$dir/dist/ui" "$dir/ui"; do

@@ -24,7 +24,7 @@ git clone --recurse-submodules https://github.com/ng-he/mstu.git
 ## Building
 
 Each plugin is built by its own repository, in its own language. `collect.sh`
-gathers the results into `plugins/`, which is where the engine looks:
+gathers the results into `build/plugins/`, which is where the engine looks:
 
 ```sh
 ./collect.sh --build          # build every plugin, then collect

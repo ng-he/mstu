@@ -16,7 +16,7 @@ its own schedule.
 | `mstu-desktop` | Electron and React, and the UI SDK a plugin page is written against. |
 | `plugins-src/*` | One repository per plugin. |
 | `integration/` | The parts tested together against a running engine. |
-| `plugins/` | Where built plugins are collected. Gitignored; the engine reads it. |
+| `build/plugins/` | Where built plugins are collected. Gitignored; the engine reads it. |
 
 ## After every change
 
@@ -37,7 +37,7 @@ around it.
 
 A change to a plugin only reaches the engine once it is rebuilt and collected,
 which `./test.sh` does, or `./collect.sh --build` on its own. **A stale `.so`
-in `plugins/` is a segfault waiting to happen**: the engine loads whatever is
+in `build/plugins/` is a segfault waiting to happen**: the engine loads whatever is
 there, and an old binary against a changed ABI crashes rather than complains.
 
 ## Running it
@@ -62,6 +62,8 @@ given a name of its own, which is how the integration tests stay out of the way.
 Nothing may assume Linux. `mstu-engine/src/ipc.rs` is where the unix socket and
 the Windows named pipe part company, with the same split on the client side in
 `integration/src/channel.rs`; above those two files the protocol is the same.
+`mstu-engine/src/library.rs` is the other split: loading a plugin whose own
+dependencies sit beside it, which Windows will not do unless told.
 A library is `std::env::consts::DLL_EXTENSION` and may or may not carry `lib` in
 front of it, so never spell `.so` out. Scripts are bash, run under Git Bash on
 Windows.
@@ -82,7 +84,7 @@ node rather than copied, and lives as long as the last of them.
 A plugin exports one symbol, `plugin_descriptor`, returning a table of
 function pointers. Each plugin repository provides `build.sh` and `test.sh`;
 the centre calls those and never assumes a language. Built libraries and `ui/`
-folders are gathered by `collect.sh` into `plugins/`.
+folders are gathered by `collect.sh` into `build/plugins/`.
 
 Inside this checkout `.cargo/config.toml` patches `mstu-sdk` and `mstu-media`
 to the submodules, so a change to the SDK reaches everything without

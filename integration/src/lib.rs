@@ -1,8 +1,8 @@
 //! Drives a real engine with the plugins that were collected beside it.
 //!
 //! Nothing here is mocked: the engine runs as its own process, the plugins are
-//! the libraries in `plugins/`, and everything is said over the channel the
-//! desktop app uses.
+//! the libraries collect.sh gathered, and everything is said over the channel
+//! the desktop app uses.
 
 pub mod camera;
 pub mod channel;
@@ -54,7 +54,10 @@ fn engine_binary() -> PathBuf {
 }
 
 fn plugin_dir() -> PathBuf {
-    let dir = center().join("plugins");
+    // Wherever collect.sh was told to put them, or where it puts them.
+    let dir = std::env::var("MSTU_PLUGIN_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| center().join("build/plugins"));
 
     let library = std::env::consts::DLL_EXTENSION;
 
