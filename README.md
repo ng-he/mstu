@@ -46,7 +46,10 @@ platform packages the app as -- an AppImage on Linux -- which takes a minute
 and a hundred megabytes, so it is asked for rather than assumed.
 
 A plugin in a language cargo knows nothing about puts its library and its `ui`
-folder in `dist/`, and is collected the same way.
+folder in `dist/`, and is collected the same way. `mstu-computer-vision` is the
+one that does: C++ built by cmake against the SDK's generated C header and
+nothing else, which is how that header is kept usable by anyone not writing
+Rust.
 
 Then run the engine and the app:
 
@@ -88,7 +91,9 @@ its own if it wants the centre to call it.
 The parts written here are tested with cargo. A plugin is tested by its own
 `test.sh`, the same way it is built by its own `build.sh`, so a plugin written
 in another language tests itself however suits it; all the suite asks of it is
-an exit status.
+an exit status. Two plugins want something installed -- libav for the image
+decoder, cmake for the computer vision one -- and both pass without it rather
+than failing, so a fresh clone is green before anything is apt-installed.
 
 The ones in [integration/](integration) start a real engine, wire real plugins
 through it and check what comes out the other end; they need the engine built

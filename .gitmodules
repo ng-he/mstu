@@ -28,3 +28,6 @@
 [submodule "plugins-src/mstu-image-decoder"]
 	path = plugins-src/mstu-image-decoder
 	url = https://github.com/ng-he/mstu-image-decoder.git
+[submodule "plugins-src/mstu-computer-vision"]
+	path = plugins-src/mstu-computer-vision
+	url = https://github.com/ng-he/mstu-computer-vision.git

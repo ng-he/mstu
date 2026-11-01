@@ -222,6 +222,7 @@ pub const SOURCE: &str = "mstu-media-file-source";
 pub const DUMPER: &str = "mstu-media-dumper";
 pub const RTSP: &str = "mstu-rtsp-source";
 pub const IMAGES: &str = "mstu-image-decoder";
+pub const VISION: &str = "mstu-computer-vision";
 
 /// The source's payload field, and the dumper's.
 pub const PAYLOAD: u64 = 4;
