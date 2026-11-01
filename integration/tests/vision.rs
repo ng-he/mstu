@@ -35,6 +35,17 @@ fn a_plugin_written_in_cpp_is_described_like_any_other() {
         .unwrap_or_else(|| panic!("{VISION} should have been collected from its dist folder"));
 
     assert_eq!(vision["name"], "Computer vision");
+
+    // A page of its own, which the host found beside the library. The plugin
+    // names that folder and collect.sh renames it on the way in, so only the
+    // engine can say whether the two agree.
+    let made = client.call("create_plugin", json!({ "library": VISION }));
+
+    assert!(
+        made["ui"].is_string(),
+        "the ui folder should have been found: {made:?}"
+    );
+
     assert_eq!(
         vision["source"], false,
         "it takes images, so it is no source"
@@ -98,7 +109,7 @@ fn images_pass_through_a_cpp_node_on_their_way_to_the_dumper() {
 
     let engine = Engine::start("vision-chain");
     let out = scratch("vision-written");
-    let (pushed, written) = run_chain(&engine, &clip, &out, false);
+    let (pushed, written) = run_chain(&engine, &clip, &out, false, None);
 
     // What the C++ node's own readings say: images is the second field, and
     // it only moves if messages reached a plugin the engine loaded from a
@@ -108,8 +119,11 @@ fn images_pass_through_a_cpp_node_on_their_way_to_the_dumper() {
         .find(|values| values[1].as_u64().unwrap_or(0) > 0)
         .expect("a live reading with images in it");
 
-    assert_eq!(reading[0], "detecting", "{reading:?}");
-    assert_eq!(reading[2], 0, "nothing detects yet: {reading:?}");
+    // Idle, because no model was named -- and the images went through all the
+    // same, which is the point: a pipeline drawn around this node works
+    // before anyone has given it anything to detect with.
+    assert_eq!(reading[0], "idle", "{reading:?}");
+    assert_eq!(reading[2], 0, "nothing to detect with: {reading:?}");
 
     assert!(!written.is_empty(), "the dumper wrote nothing");
 
@@ -135,7 +149,7 @@ fn a_setting_written_from_the_app_changes_what_a_cpp_node_does() {
 
     let engine = Engine::start("vision-setting");
     let out = scratch("vision-withheld");
-    let (pushed, written) = run_chain(&engine, &clip, &out, true);
+    let (pushed, written) = run_chain(&engine, &clip, &out, true, None);
 
     // It saw the images: the setting changed what it did with them, not
     // whether they arrived.
@@ -157,6 +171,70 @@ fn a_setting_written_from_the_app_changes_what_a_cpp_node_does() {
     assert_eq!(images, 0, "{images} images in {} files", written.len());
 }
 
+/// What model.sh fetched, if it has been run: the model is not committed, so
+/// a fresh clone skips this rather than failing.
+fn model() -> Option<std::path::PathBuf> {
+    let path = center()
+        .join("plugins-src/mstu-computer-vision/models")
+        .join("yolox_tiny.onnx");
+
+    path.is_file().then_some(path)
+}
+
+/// Named a model through the engine, the node reads it on a thread of its own
+/// and says so in its readings.
+///
+/// The clips here are flat colour, so nothing is found in them; that a model
+/// loads at all is what this is for. What it detects is checked in the
+/// plugin's own tests, against a sign drawn for the purpose.
+#[test]
+fn a_model_named_through_the_engine_is_read_by_the_node() {
+    let Some(clip) = clip("h264.mp4") else {
+        return skipped("the source plugin's test samples are not checked out");
+    };
+
+    let Some(model) = model() else {
+        return skipped("no model: run plugins-src/mstu-computer-vision/model.sh");
+    };
+
+    let engine = Engine::start("vision-model");
+    let out = scratch("vision-detected");
+    let (pushed, _) = run_chain(&engine, &clip, &out, false, Some(&model));
+
+    let reading = pushed
+        .iter()
+        .find(|values| values[0] == "detecting")
+        .unwrap_or_else(|| panic!("the node never started detecting: {pushed:?}"));
+
+    // The sixth field names what is doing the work, which is only filled in
+    // once the thread has a model open.
+    assert!(
+        reading[5].as_str().unwrap_or("none").contains("opencv"),
+        "{reading:?}"
+    );
+
+    // And the seventh is empty while nothing is wrong.
+    assert_eq!(reading[6], "", "{reading:?}");
+
+    // Images went through, and a flat clip holds nothing.
+    assert!(reading[1].as_u64().unwrap_or(0) > 0, "{reading:?}");
+    assert_eq!(reading[2], 0, "a flat clip holds no objects: {reading:?}");
+    assert_eq!(reading[7], "", "nothing in view: {reading:?}");
+
+    // The ninth names a file holding the latest image, which is how the
+    // plugin's own page shows one: live readings carry no payloads. Nothing
+    // was found in these, so it is the picture rather than one drawn on.
+    let shown = pushed
+        .iter()
+        .filter_map(|values| values[8].as_str())
+        .find(|path| !path.is_empty())
+        .expect("a preview path");
+
+    let kept = fs::read(shown).unwrap_or_else(|error| panic!("{shown}: {error}"));
+
+    assert_eq!(kept[..3], [0xff, 0xd8, 0xff], "a jpeg in {shown}");
+}
+
 /// Source, decoder, the C++ node and dumper, run once.
 ///
 /// Returns the node's own live readings and what the dumper wrote.
@@ -165,6 +243,7 @@ fn run_chain(
     clip: &std::path::Path,
     out: &std::path::Path,
     only_when_found: bool,
+    model: Option<&std::path::Path>,
 ) -> (Vec<Vec<serde_json::Value>>, Vec<std::path::PathBuf>) {
     let mut client = engine.connect();
 
@@ -179,6 +258,10 @@ fn run_chain(
 
     if only_when_found {
         client.set(&vision, 4, json!(true));
+    }
+
+    if let Some(model) = model {
+        client.set(&vision, 0, json!(model.to_string_lossy()));
     }
 
     let from = client.node(pipeline, &source);

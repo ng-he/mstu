@@ -28,7 +28,7 @@ its own schedule.
 
 They need nothing installed beyond cargo, with two exceptions.
 `mstu-image-decoder` builds against libav, and `mstu-computer-vision` is C++
-and wants cmake. Each says so in its own `build.sh` and `test.sh` and passes
+and wants cmake, OpenCV to detect with, and `./model.sh` run once for a model. Each says so in its own `build.sh` and `test.sh` and passes
 without its dependency, so a fresh clone stays green. The windows check skips
 any part carrying a `.no-windows-check` file, for the same reason, and skips a
 plugin with no cargo manifest at all -- so nothing checks the C++ one for
