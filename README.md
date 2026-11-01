@@ -8,6 +8,12 @@ This repository holds no code of its own. Every part is its own repository,
 brought in here as a submodule, so a plugin can be written in any language
 and released on its own schedule.
 
+![An RTSP camera decoded to jpeg, with the objects in every frame found and drawn](preview/preview.png)
+
+Three nodes and two wires: a camera read over RTSP, its H265 turned into jpeg,
+and what is in each frame found and boxed. Every node draws its own page, and
+that page comes from the plugin rather than from the app.
+
 ```sh
 git clone --recurse-submodules https://github.com/ng-he/mstu.git
 ```
